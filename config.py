@@ -47,12 +47,6 @@ YT_DLP_COOKIES_BROWSER = os.getenv("YT_DLP_COOKIES_BROWSER", "chrome")
 # "let the OS pick a free port" if this one's already taken.
 SERVE_PORT = int(os.getenv("SERVE_PORT", "8000"))
 
-# Default for the --click-to-seek CLI flag. Off by default: it swaps
-# freely-flowing GPT-translated sentences for shorter, timestamp-aligned
-# segment-by-segment translations so clicking a phrase can seek the
-# embedded video there. See README for the tradeoff.
-CLICK_TO_SEEK_DEFAULT = os.getenv("CLICK_TO_SEEK", "false").strip().lower() in ("1", "true", "yes", "on")
-
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError(

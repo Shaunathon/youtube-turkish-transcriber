@@ -4,10 +4,10 @@ Feed it a YouTube video link and it:
   2. Otherwise downloads the audio and transcribes it via the OpenAI Whisper API,
      splitting into multiple parts (via ffmpeg) if the audio is too big for one request
   3. Marks long wordless stretches (e.g. instrument demonstrations) as [[DEMONSTRATION]]
-  4. Translates to English + generates vocab/grammar notes with GPT
+  4. Translates to English with GPT, with timestamps so each sentence can seek the video
   5. Writes a side-by-side HTML report per part, with the original video embedded
 
-Run with:  python3 main.py <youtube-url> [--click-to-seek]
+Run with:  python3 main.py <youtube-url>
 """
 import argparse
 import json
@@ -15,12 +15,12 @@ import logging
 import sys
 from datetime import datetime, timezone
 
-from config import CLICK_TO_SEEK_DEFAULT, DEMONSTRATION_GAP_SECONDS, OUTPUT_FOLDER, SERVE_PORT, TOKEN_USAGE_LOG
+from config import DEMONSTRATION_GAP_SECONDS, OUTPUT_FOLDER, SERVE_PORT, TOKEN_USAGE_LOG
 from demonstration import insert_demonstration_markers
 from html_report import build_html_report, update_manifest, write_shared_assets
 from serve import serve_and_open
 from transcriber import transcribe
-from translator import translate_freeform, translate_segments_aligned
+from translator import translate_segments_aligned
 from youtube_source import (
     cleanup,
     download_audio,
@@ -93,7 +93,7 @@ def _gather_segment_groups(video_id: str, duration_seconds: float):
         cleanup(audio_path)
 
 
-def process_video(url: str, click_to_seek: bool) -> list:
+def process_video(url: str) -> list:
     video_id = extract_video_id(url)
     meta = get_video_metadata(video_id)
     log.info(f"'{meta.title}' ({meta.duration_seconds / 60:.1f} min, id={video_id})")
@@ -110,13 +110,12 @@ def process_video(url: str, click_to_seek: bool) -> list:
         else:
             marked = segments
 
-        mode = "click-to-seek" if click_to_seek else "freeform"
-        log.info(f"Translating {label} with GPT ({mode} mode)...")
-        result = translate_segments_aligned(marked) if click_to_seek else translate_freeform(marked)
+        log.info(f"Translating {label} with GPT...")
+        result = translate_segments_aligned(marked)
 
         usage = result.pop("usage", None)
         if usage:
-            record_token_usage(f"{meta.title} ({label}, {mode})", usage)
+            record_token_usage(f"{meta.title} ({label})", usage)
 
         out_path = build_html_report(
             video_title=meta.title,
@@ -126,7 +125,6 @@ def process_video(url: str, click_to_seek: bool) -> list:
             part=part,
             total_parts=total_parts,
             transcript_source=source_label,
-            click_to_seek=click_to_seek,
             result=result,
             output_folder=OUTPUT_FOLDER,
             token_usage=usage,
@@ -143,28 +141,16 @@ def main() -> None:
         description="Transcribe a YouTube video's Turkish audio into a side-by-side Turkish/English HTML report."
     )
     parser.add_argument("url", help="YouTube video URL (or a bare 11-character video ID)")
-    seek_group = parser.add_mutually_exclusive_group()
-    seek_group.add_argument(
-        "--click-to-seek", dest="click_to_seek", action="store_true", default=None,
-        help="Segment-aligned translation with timestamps, so clicking a phrase seeks the embedded "
-             "video there. Choppier prose than the default - see README. Writes to a "
-             "'-clicktoseek' filename so it doesn't overwrite a freeform run of the same video.",
-    )
-    seek_group.add_argument(
-        "--no-click-to-seek", dest="click_to_seek", action="store_false",
-        help="Force freeform mode for this run, even if CLICK_TO_SEEK=true is set in .env.",
-    )
     parser.add_argument(
         "--no-serve", dest="serve", action="store_false", default=True,
         help="Don't start a local server / open a browser when done - just write the report and "
              "exit. Useful for scripting multiple videos back to back.",
     )
     args = parser.parse_args()
-    click_to_seek = CLICK_TO_SEEK_DEFAULT if args.click_to_seek is None else args.click_to_seek
 
     OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
     try:
-        out_paths = process_video(args.url, click_to_seek)
+        out_paths = process_video(args.url)
     except Exception:
         log.exception(f"Failed to process {args.url}")
         sys.exit(1)

@@ -1,25 +1,18 @@
 """
 Sends the Turkish transcript to OpenAI's chat completions API and gets back
-Turkish/English sentence pairs.
+Turkish/English sentence pairs with timestamps.
 
-Two modes, chosen by main.py based on the --click-to-seek flag:
-
-- translate_freeform: GPT freely resplits the whole transcript into
-  natural, flowing sentences. Reads best, but the resulting pairs carry no
-  timestamps.
-- translate_segments_aligned: segments_marked is first split into
-  marker-free spans (chunks between [[DEMONSTRATION]] markers). GPT groups
-  each span's timestamped segments into complete, natural sentences and
-  translates each group as a whole - so prose quality matches freeform,
-  while every pair still carries the timestamp of the segment it starts at
-  (from the first segment in its group), driving click-to-seek. Because a
-  span never contains a marker, "never span a marker" isn't a rule GPT has
-  to remember and follow - it's structurally impossible to break. The
-  Turkish side of each pair is reconstructed directly from the source
-  segments rather than trusted to GPT, so it's always exactly faithful -
-  no drift-checking needed.
-
-Both preserve [[DEMONSTRATION]] markers as their own standalone pair.
+translate_segments_aligned: segments_marked is first split into marker-free
+spans (chunks between [[DEMONSTRATION]] markers, which is preserved as its
+own standalone pair). GPT groups each span's timestamped segments into
+complete, natural sentences and translates each group as a whole - so
+prose quality reads naturally, while every pair still carries the
+timestamp of the segment it starts at (from the first segment in its
+group), driving click-to-seek. Because a span never contains a marker,
+"never span a marker" isn't a rule GPT has to remember and follow - it's
+structurally impossible to break. The Turkish side of each pair is
+reconstructed directly from the source segments rather than trusted to
+GPT, so it's always exactly faithful - no drift-checking needed.
 """
 import json
 import logging
@@ -58,35 +51,6 @@ diacritics ("Kürdi" -> "Kurdi", etc.), and spell each one consistently througho
 play X"), keep that title in its original Turkish within the English translation rather than \
 translating it - it is a proper title, not descriptive text.
 """
-
-FREEFORM_SYSTEM_PROMPT = """You are a Turkish-English translator helping an intermediate \
-learner. You will be given a Turkish transcript from an instructional video (e.g. a music \
-lesson), so it may be casual, contain false starts, or minor transcription errors - work around \
-those sensibly. It may also contain the literal token [[DEMONSTRATION]] marking a wordless \
-passage. Respond with ONLY valid JSON (no markdown fences, no commentary) matching exactly this \
-shape:
-
-{
-  "sentence_pairs": [
-    {"turkish": "one Turkish sentence, reproduced from the transcript, OR the literal token [[DEMONSTRATION]]", "english": "the matching English sentence, OR [[DEMONSTRATION]] unchanged"}
-  ]
-}
-
-Critical rule for sentence_pairs: split the Turkish transcript into sentences FIRST, \
-reproducing each Turkish sentence exactly as given (fix only obvious transcription typos, \
-never rephrase or reorder words). Then give ONE matching English sentence per Turkish \
-sentence - even if that English reads a little less smoothly than a freely-written paragraph \
-would, each pair must correspond 1:1. Never merge two Turkish sentences into one English \
-sentence, and never split one Turkish sentence into two English sentences. If a Turkish \
-"sentence" is really a fragment (common in casual speech), keep it as its own pair rather \
-than merging it into a neighbor. The [[DEMONSTRATION]] token, if present, must appear as its \
-own pair (turkish and english both exactly "[[DEMONSTRATION]]"), never merged into a \
-neighboring sentence. Concatenating all "turkish" fields in order, with single spaces between \
-them, must reproduce the original transcript.
-
-The literal token [[DEMONSTRATION]] is not Turkish - never translate it or explain it. Leave it \
-exactly as-is wherever it must appear in your output.
-""" + _MUSIC_TERMINOLOGY_GUIDANCE
 
 ALIGNED_SYSTEM_PROMPT = """You are a Turkish-English translator helping an intermediate \
 learner. You will be given one continuous stretch of a Turkish transcript from an instructional \
@@ -144,30 +108,6 @@ def _parse_json_response(content: str) -> dict:
     except json.JSONDecodeError as e:
         log.error(f"Model did not return valid JSON: {content[:500]}")
         raise e
-
-
-def translate_freeform(segments_marked: list) -> dict:
-    """
-    segments_marked: [{"start", "end", "text", ["is_marker"]}, ...]
-    Returns {"sentence_pairs": [{"turkish", "english"}], "usage": {...}}.
-    Pairs carry no timestamps.
-    """
-    turkish_text = " ".join(s["text"] for s in segments_marked)
-
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        response_format={"type": "json_object"},
-        temperature=0.3,
-        messages=[
-            {"role": "system", "content": FREEFORM_SYSTEM_PROMPT},
-            {"role": "user", "content": turkish_text},
-        ],
-    )
-    data = _parse_json_response(response.choices[0].message.content)
-
-    data.setdefault("sentence_pairs", [])
-    data["usage"] = _extract_usage(response)
-    return data
 
 
 def _validate_and_build_groups(segments_marked: list, raw_groups: list) -> list:
@@ -312,11 +252,12 @@ def _group_span(span_segments: list) -> tuple:
 def translate_segments_aligned(segments_marked: list) -> dict:
     """
     segments_marked: [{"start", "end", "text", ["is_marker"]}, ...]
-    Returns the same shape as translate_freeform, but every sentence pair
-    also carries "start"/"end" (seconds): the timestamp of the first/last
-    segment in its group. The Turkish side is reconstructed directly from
-    the source segments (always exactly faithful); only the English side
-    and the grouping itself come from GPT, one marker-free span at a time.
+    Returns {"sentence_pairs": [{"turkish", "english", "start", "end"}],
+    "usage": {...}}. "start"/"end" (seconds) is the timestamp of the
+    first/last segment in the pair's group. The Turkish side is
+    reconstructed directly from the source segments (always exactly
+    faithful); only the English side and the grouping itself come from
+    GPT, one marker-free span at a time.
     """
     spans = _split_into_spans(segments_marked)
 

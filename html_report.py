@@ -100,17 +100,6 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
   text-transform: uppercase;
   color: var(--muted);
 }
-.badge {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--turquoise-soft);
-  color: var(--turquoise);
-  font-weight: 600;
-  letter-spacing: 0.03em;
-}
-
 /* YouTube embed - sticky to the top of the viewport while scrolling the
    transcript below it, so it's always visible without shrinking. */
 .video-embed-wrap {
@@ -268,17 +257,13 @@ SIDEBAR_JS = """// Renders the transcript list into the sidebar from manifest.js
 """
 
 REPORT_JS = """// Turkish/English hover-linking, click-to-seek on the embedded YouTube
-// player, English-column alignment against the Turkish column, and (when a
-// report was built with --click-to-seek, so sentence spans carry a
-// data-start attribute) playback-position highlighting with autoscroll.
-// No-ops quietly wherever that data isn't present.
+// player, English-column alignment against the Turkish column, and
+// playback-position highlighting with autoscroll.
 
 // Turkish sentences tend to run longer than their English translations, so
 // left alone the two columns drift apart the deeper into the transcript
 // you read. This pads the English side (never the Turkish side) so each
 // pair's start stays within about a line and a half of its counterpart.
-// Runs on every report, not just --click-to-seek ones - this is a pure
-// typography concern, unrelated to timestamps.
 (function () {
   function alignColumns() {
     var trCol = document.querySelector('.col.tr');
@@ -350,9 +335,9 @@ window.onYouTubeIframeAPIReady = function () {
   });
 })();
 
-// Playback-position highlight + autoscroll. Only runs when there are
-// Turkish sentence spans with real timestamps (i.e. a --click-to-seek
-// report) - freeform reports have none of these, so this exits immediately.
+// Playback-position highlight + autoscroll. Guarded on there being real
+// timestamped Turkish sentence spans (always true in practice, but cheap
+// insurance against an edge case like a completely empty transcript).
 (function () {
   var trSentences = Array.prototype.slice.call(document.querySelectorAll('.col.tr .sent[data-start]'));
   if (!trSentences.length) return;
@@ -507,10 +492,8 @@ def update_manifest(output_folder: Path) -> None:
     (output_folder / "manifest.js").write_text(manifest_js, encoding="utf-8")
 
 
-def report_stem(video_title: str, click_to_seek: bool, part: Optional[int]) -> str:
+def report_stem(video_title: str, part: Optional[int]) -> str:
     stem = slugify(video_title)
-    if click_to_seek:
-        stem += "-clicktoseek"
     if part:
         stem += f"-part-{part}"
     return stem
@@ -524,7 +507,6 @@ def build_html_report(
     part: Optional[int],
     total_parts: Optional[int],
     transcript_source: str,
-    click_to_seek: bool,
     result: dict,
     output_folder: Path,
     token_usage: Optional[dict] = None,
@@ -550,10 +532,6 @@ def build_html_report(
     if embed_end:
         embed_src += f"&end={int(embed_end)}"
     watch_url = f"https://www.youtube.com/watch?v={video_id}&t={int(embed_start)}s"
-    autoscroll_button_html = (
-        '<button type="button" id="autoscroll-toggle" class="autoscroll-toggle" disabled>Autoscroll: active</button>'
-        if click_to_seek else ""
-    )
     video_html = f"""  <div class="video-embed-wrap">
     <div class="video-embed">
       <iframe id="yt-player" src="{html.escape(embed_src)}" title="{_esc(video_title)}"
@@ -562,7 +540,7 @@ def build_html_report(
     </div>
     <div class="video-controls">
       <a class="watch-on-youtube" href="{html.escape(watch_url)}" target="_blank" rel="noopener noreferrer">Watch on YouTube &#8599;</a>
-      {autoscroll_button_html}
+      <button type="button" id="autoscroll-toggle" class="autoscroll-toggle" disabled>Autoscroll: active</button>
     </div>
   </div>
 """
@@ -572,7 +550,6 @@ def build_html_report(
         display_title += f" — Part {part}" + (f" of {total_parts}" if total_parts else "")
 
     timestamp = datetime.now().strftime("%B %d, %Y · %I:%M %p")
-    mode_badge = "click-to-seek" if click_to_seek else "freeform"
     title = html.escape(display_title)
 
     doc = f"""<!DOCTYPE html>
@@ -594,7 +571,7 @@ def build_html_report(
     <div class="wrap">
       <header>
         <h1>{title}</h1>
-        <div class="meta">Turkish video transcript &amp; notes &middot; {timestamp} &middot; {html.escape(transcript_source)}<span class="badge">{mode_badge}</span></div>
+        <div class="meta">Turkish video transcript &middot; {timestamp} &middot; {html.escape(transcript_source)}</div>
       </header>
 {video_html}
       <div class="columns">
@@ -619,7 +596,7 @@ def build_html_report(
 """
 
     output_folder.mkdir(parents=True, exist_ok=True)
-    stem = report_stem(video_title, click_to_seek, part)
+    stem = report_stem(video_title, part)
     out_path = output_folder / f"{stem}.html"
     out_path.write_text(doc, encoding="utf-8")
     return out_path
