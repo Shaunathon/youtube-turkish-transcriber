@@ -99,18 +99,18 @@ Whisper's API caps a single upload at 25MB. If a video's downloaded audio exceed
 
 This only applies when Whisper transcription is needed. Videos with an existing YouTube transcript are never chunked, since caption text has no size limit.
 
-## Click-to-seek: an opt-in tradeoff
+## Click-to-seek
 
 By default, translation is **freeform**: GPT reads the whole transcript and splits it into natural, flowing sentences - the same approach `turkish-voice-transcriber` uses. This reads smoothly, but the resulting sentence pairs carry no timestamps, so hovering highlights the matching pair but doesn't move the video.
 
-Pass `--click-to-seek` to switch to **segment-aligned** translation instead: GPT translates each Whisper/caption segment individually, one-to-one, in place, so every pair keeps its exact timestamp - and clicking (not just hovering) a Turkish or English phrase seeks the embedded video there. The tradeoff: Whisper/caption segments are usually shorter than full sentences (often a clause or phrase), so the pairs read choppier - more phrase-by-phrase than paragraph-flow.
+Pass `--click-to-seek` to also get real timestamps: GPT groups the timestamped Whisper/caption segments into complete, natural sentences (never spanning a `[[DEMONSTRATION]]` marker) and translates each group as a whole, so prose quality matches freeform - but every pair also carries the timestamp of the segment its group starts at, and clicking (not just hovering) a Turkish or English sentence seeks the embedded video there. The Turkish side is always reconstructed directly from the source segments, so it's exactly faithful regardless of how GPT groups them.
 
 ```bash
-python3 main.py "<url>"                     # default: freeform, smooth prose, no seeking
-python3 main.py "<url>" --click-to-seek      # segment-aligned, choppier, click-to-seek enabled
+python3 main.py "<url>"                     # freeform, no seeking
+python3 main.py "<url>" --click-to-seek      # same prose quality, plus click-to-seek
 ```
 
-Running both against the same video writes two separate files (the second gets a `-clicktoseek` suffix) so you can open them side by side and judge the prose-quality cost for yourself. You can also flip the *default* for every run by setting `CLICK_TO_SEEK=true` in `.env`, and override it per-run with `--no-click-to-seek`.
+Running both against the same video writes two separate files (the second gets a `-clicktoseek` suffix). You can flip the *default* for every run by setting `CLICK_TO_SEEK=true` in `.env`, and override it per-run with `--no-click-to-seek`.
 
 ## Notes & tuning
 
