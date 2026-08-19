@@ -29,6 +29,8 @@ from demonstration import DEMONSTRATION_TOKEN
 log = logging.getLogger("youtube-transcriber")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+_ALIGNED_MAX_ATTEMPTS = 3
+
 _VOCAB_GRAMMAR_GUIDELINES = """
 Guidelines:
 - vocabulary: 5-12 words/phrases genuinely worth learning for an intermediate learner. Skip \
@@ -107,6 +109,13 @@ transcript order. A group's start_index/end_index must span a contiguous run of 
 indices with no marker index anywhere inside that range - if a marker sits between two speech \
 items, they belong to different groups even if the sentence feels unfinished. Never reorder, \
 skip, or duplicate an index.
+
+You will be told the total number of items up front. Before finalizing your answer, explicitly \
+verify: walking your "sentences" array in order, each group's start_index must equal the \
+previous group's end_index + 1 (or the index right after a marker, if one sits in between) - \
+with no item, including the very last one, left out of every group. Omitting even a single item \
+is the most common mistake here; double-check the full range is covered before responding, \
+especially on longer transcripts with many items.
 """ + _VOCAB_GRAMMAR_GUIDELINES
 
 
@@ -211,23 +220,49 @@ def translate_segments_aligned(segments_marked: list) -> dict:
     segment in its group. The Turkish side is reconstructed directly from
     the source segments (always exactly faithful); only the English side
     and the grouping itself come from GPT.
+
+    GPT occasionally drops an item from its grouping entirely (a known
+    failure mode on longer, index-heavy structured output) - _validate_and_
+    build_groups catches that rather than silently producing a wrong
+    timestamp, so this retries a few times on that specific failure before
+    giving up, since it's usually just sampling variance rather than a
+    transcript GPT can't handle at all.
     """
-    payload = [
+    payload_items = [
         {"index": i, "marker": True} if s.get("is_marker") else {"index": i, "turkish": s["text"]}
         for i, s in enumerate(segments_marked)
     ]
-
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        response_format={"type": "json_object"},
-        temperature=0.3,
-        messages=[
-            {"role": "system", "content": ALIGNED_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ],
+    user_content = json.dumps(
+        {"total_items": len(payload_items), "items": payload_items}, ensure_ascii=False
     )
-    data = _parse_json_response(response.choices[0].message.content)
-    groups = _validate_and_build_groups(segments_marked, data.get("sentences", []))
+
+    usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    data = groups = last_error = None
+    for attempt in range(1, _ALIGNED_MAX_ATTEMPTS + 1):
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            messages=[
+                {"role": "system", "content": ALIGNED_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        )
+        for key, value in _extract_usage(response).items():
+            usage_total[key] = usage_total.get(key, 0) + value
+
+        data = _parse_json_response(response.choices[0].message.content)
+        try:
+            groups = _validate_and_build_groups(segments_marked, data.get("sentences", []))
+            break
+        except ValueError as e:
+            last_error = e
+            log.warning(f"Aligned-mode grouping attempt {attempt}/{_ALIGNED_MAX_ATTEMPTS} failed validation: {e}")
+    else:
+        raise ValueError(
+            f"Aligned mode: GPT's segment grouping failed validation {_ALIGNED_MAX_ATTEMPTS} times "
+            f"in a row. Last error: {last_error}"
+        )
 
     sentence_pairs = []
     i, g = 0, 0
@@ -255,5 +290,5 @@ def translate_segments_aligned(segments_marked: list) -> dict:
         "sentence_pairs": sentence_pairs,
         "vocabulary": data.get("vocabulary", []),
         "grammar_notes": data.get("grammar_notes", []),
-        "usage": _extract_usage(response),
+        "usage": usage_total,
     }
