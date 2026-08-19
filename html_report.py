@@ -111,12 +111,21 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
   letter-spacing: 0.03em;
 }
 
-/* YouTube embed */
-.video-embed-wrap { margin-top: 18px; }
+/* YouTube embed - sticky to the top of the viewport while scrolling the
+   transcript below it, so it's always visible without shrinking. */
+.video-embed-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--paper);
+  padding: 18px 0 14px;
+  text-align: center;
+}
 .video-embed {
   position: relative;
   width: 100%;
   max-width: 640px;
+  margin: 0 auto;
   aspect-ratio: 16 / 9;
   background: #111;
   border: 1px solid var(--line);
@@ -124,15 +133,38 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
   overflow: hidden;
 }
 .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-.watch-on-youtube {
-  display: inline-block;
+.video-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
   margin-top: 8px;
+}
+.watch-on-youtube {
   font-family: 'Work Sans', -apple-system, sans-serif;
   font-size: 0.8rem;
   color: var(--coral);
   text-decoration: none;
 }
 .watch-on-youtube:hover { text-decoration: underline; }
+.autoscroll-toggle {
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: not-allowed;
+}
+.autoscroll-toggle:not(:disabled) {
+  cursor: pointer;
+  color: var(--coral);
+  border-color: var(--coral);
+  background: var(--coral-soft);
+}
+.autoscroll-toggle:not(:disabled):hover { background: var(--coral); color: var(--paper); }
 
 .columns {
   display: grid;
@@ -166,11 +198,17 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
   padding: 6px 8px 0 0;
 }
 
-.sent { border-radius: 3px; transition: background-color .15s ease, text-decoration-color .15s ease; }
-.col.tr .sent.sent-active { background: var(--turquoise-soft); }
-.col.en .sent.sent-active { text-decoration: underline; text-decoration-color: var(--coral); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.sent {
+  border-radius: 3px;
+  transition: background-color .15s ease, text-decoration-color .15s ease;
+}
 .sent.seekable { cursor: pointer; text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }
 .sent.seekable:hover { text-decoration-color: var(--coral); }
+/* Hover pairing (either column) - underline, matches the seekable hint style but solid. */
+.sent.sent-active { text-decoration: underline; text-decoration-color: var(--coral); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+/* Current video playback position - Turkish side only, driven by report.js polling
+   the player's currentTime, independent of hover. */
+.col.tr .sent.sent-playing { background: var(--turquoise-soft); }
 .sent.marker { font-family: 'Work Sans', -apple-system, sans-serif; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-style: normal; }
 
 .empty { font-family: 'Work Sans', -apple-system, sans-serif; color: var(--muted); font-size: 0.9rem; font-style: normal; }
@@ -222,9 +260,10 @@ SIDEBAR_JS = """// Renders the transcript list into the sidebar from manifest.js
 })();
 """
 
-REPORT_JS = """// Turkish/English hover-linking, plus click-to-seek on the embedded
-// YouTube player when a report was built with --click-to-seek (sentence
-// spans then carry a data-start attribute). No-ops quietly otherwise.
+REPORT_JS = """// Turkish/English hover-linking, click-to-seek on the embedded YouTube
+// player, and (when a report was built with --click-to-seek, so sentence
+// spans carry a data-start attribute) playback-position highlighting with
+// autoscroll. No-ops quietly wherever that data isn't present.
 window.onYouTubeIframeAPIReady = function () {
   var el = document.getElementById('yt-player');
   if (el && window.YT) {
@@ -255,6 +294,100 @@ window.onYouTubeIframeAPIReady = function () {
       });
     }
   });
+})();
+
+// Playback-position highlight + autoscroll. Only runs when there are
+// Turkish sentence spans with real timestamps (i.e. a --click-to-seek
+// report) - freeform reports have none of these, so this exits immediately.
+(function () {
+  var trSentences = Array.prototype.slice.call(document.querySelectorAll('.col.tr .sent[data-start]'));
+  if (!trSentences.length) return;
+
+  var videoWrap = document.querySelector('.video-embed-wrap');
+  var toggleBtn = document.getElementById('autoscroll-toggle');
+  var autoScrollEnabled = true;
+  var suppressScrollDetection = false;
+  var suppressTimeoutId = null;
+  var currentEl = null;
+
+  function setAutoScroll(enabled) {
+    autoScrollEnabled = enabled;
+    if (!toggleBtn) return;
+    toggleBtn.disabled = enabled;
+    toggleBtn.textContent = enabled ? 'Autoscroll: active' : 'Autoscroll: activate';
+  }
+
+  // Computed manually rather than via el.scrollIntoView(): with a
+  // position:sticky video pinned over the top of the viewport,
+  // scrollIntoView's "nearest visible edge" logic doesn't reliably account
+  // for the area the sticky element visually occludes (tested directly -
+  // block:'nearest' silently did nothing, block:'center' worked), so this
+  // measures both boxes at scroll-time and drives window.scrollTo itself.
+  function scrollCurrentIntoView() {
+    if (!currentEl) return;
+    var margin = 16;
+    var videoBottom = videoWrap ? videoWrap.getBoundingClientRect().bottom : 0;
+    var rect = currentEl.getBoundingClientRect();
+    var delta;
+    if (rect.top < videoBottom + margin) {
+      delta = rect.top - videoBottom - margin;
+    } else if (rect.bottom > window.innerHeight - margin) {
+      delta = rect.bottom - window.innerHeight + margin;
+    } else {
+      return; // already fully visible between the sticky video and the window bottom
+    }
+    suppressScrollDetection = true;
+    window.scrollTo({ top: window.scrollY + delta, behavior: 'smooth' });
+    // scrollend is the precise signal and handles this in the normal case.
+    // The timeout is only a backstop in case that event doesn't fire for
+    // some reason - it needs to be generous, since a long smooth-scroll
+    // (e.g. jumping between distant timestamps) can genuinely take a
+    // couple of seconds, and firing this before the animation actually
+    // finishes would misread its own tail end as a user-initiated scroll.
+    clearTimeout(suppressTimeoutId);
+    suppressTimeoutId = setTimeout(function () { suppressScrollDetection = false; }, 4000);
+  }
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', function () {
+      setAutoScroll(true);
+      scrollCurrentIntoView();
+    });
+  }
+
+  // Any scroll not caused by our own scrollCurrentIntoView() call means the
+  // user took manual control - hand it back to them until they click the
+  // button again.
+  window.addEventListener('scroll', function () {
+    if (suppressScrollDetection) return;
+    if (autoScrollEnabled) setAutoScroll(false);
+  });
+  window.addEventListener('scrollend', function () {
+    clearTimeout(suppressTimeoutId);
+    suppressScrollDetection = false;
+  });
+
+  function tick() {
+    if (!window.ytPlayer || typeof window.ytPlayer.getCurrentTime !== 'function') return;
+    var t = window.ytPlayer.getCurrentTime();
+    var next = null;
+    for (var i = 0; i < trSentences.length; i++) {
+      var start = parseFloat(trSentences[i].getAttribute('data-start'));
+      if (start <= t) { next = trSentences[i]; } else { break; }
+    }
+    if (next && next !== currentEl) {
+      // Skip the scroll (but still highlight) on the very first assignment
+      // right after page load - nothing has "changed" yet, so there's
+      // nothing to follow, and layout may still be settling (fonts,
+      // iframe chrome) which could otherwise produce a spurious scroll.
+      var isFirstAssignment = (currentEl === null);
+      if (currentEl) currentEl.classList.remove('sent-playing');
+      next.classList.add('sent-playing');
+      currentEl = next;
+      if (autoScrollEnabled && !isFirstAssignment) scrollCurrentIntoView();
+    }
+  }
+  setInterval(tick, 300);
 })();
 """
 
@@ -356,14 +489,21 @@ def build_html_report(
     if embed_end:
         embed_src += f"&end={int(embed_end)}"
     watch_url = f"https://www.youtube.com/watch?v={video_id}&t={int(embed_start)}s"
-    video_html = f"""    <div class="video-embed-wrap">
-      <div class="video-embed">
-        <iframe id="yt-player" src="{html.escape(embed_src)}" title="{_esc(video_title)}"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowfullscreen></iframe>
-      </div>
-      <a class="watch-on-youtube" href="{html.escape(watch_url)}" target="_blank" rel="noopener noreferrer">Watch on YouTube &#8599;</a>
+    autoscroll_button_html = (
+        '<button type="button" id="autoscroll-toggle" class="autoscroll-toggle" disabled>Autoscroll: active</button>'
+        if click_to_seek else ""
+    )
+    video_html = f"""  <div class="video-embed-wrap">
+    <div class="video-embed">
+      <iframe id="yt-player" src="{html.escape(embed_src)}" title="{_esc(video_title)}"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowfullscreen></iframe>
     </div>
+    <div class="video-controls">
+      <a class="watch-on-youtube" href="{html.escape(watch_url)}" target="_blank" rel="noopener noreferrer">Watch on YouTube &#8599;</a>
+      {autoscroll_button_html}
+    </div>
+  </div>
 """
 
     display_title = video_title
@@ -394,8 +534,8 @@ def build_html_report(
       <header>
         <h1>{title}</h1>
         <div class="meta">Turkish video transcript &amp; notes &middot; {timestamp} &middot; {html.escape(transcript_source)}<span class="badge">{mode_badge}</span></div>
-{video_html}      </header>
-
+      </header>
+{video_html}
       <div class="columns">
         <div class="col tr">
           <div class="col-label">Türkçe</div>
