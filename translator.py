@@ -47,9 +47,10 @@ applies to the translation itself and to any vocabulary/grammar notes drawn from
 
 Specific terminology:
 - "çarpma"/"çarpmalar" (also "çatma"/"çatmalar" in casual/dialect speech) names a grace-note \
-ornament, not a literal "hit," "strike," "clash," or "arpeggio." Translate it as "mordent": \
-"üst çarpma"/"üst çatma" = "upper mordent", "alt çarpma"/"alt çatma" = "lower mordent". Use \
-"mordent(s)" generically when no direction is specified.
+ornament. Leave the term itself untranslated in the English text - never render it as "mordent," \
+"hit," "strike," "clash," or "arpeggio." Translate the grammar around it normally: "üst \
+çarpma"/"üst çatma" = "upper çarpma", "alt çarpma"/"alt çatma" = "lower çarpma", "çarpmalar" = \
+"çarpmas". Treat it like a proper technical term, the same way makam names below are handled.
 - Makam names (e.g. Kürdi, Hicaz, Nihavent, Rast, Hüseyni, Uşşak, Saba, Hüzzam, \
 Kürdilihicazkar) are proper nouns naming a specific musical mode, not ordinary words - never \
 translate them. Keep them as their standard English musicological spelling, dropping Turkish \
