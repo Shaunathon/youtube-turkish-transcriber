@@ -23,13 +23,17 @@ import logging
 
 from openai import OpenAI
 
-from config import OPENAI_API_KEY, OPENAI_MODEL
+from config import OPENAI_API_KEY, OPENAI_MODEL, OUTPUT_FOLDER
 from demonstration import DEMONSTRATION_TOKEN
 
 log = logging.getLogger("youtube-transcriber")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 _ALIGNED_MAX_ATTEMPTS = 3
+# Escalate temperature on retry - two failed attempts landing on the exact
+# same gap at the same low temperature suggests sampling near-identical
+# completions rather than exploring genuinely different groupings.
+_ALIGNED_RETRY_TEMPERATURES = [0.3, 0.6, 0.9]
 
 _VOCAB_GRAMMAR_GUIDELINES = """
 Guidelines:
@@ -212,6 +216,21 @@ def _validate_and_build_groups(segments_marked: list, raw_groups: list) -> list:
     return groups
 
 
+def _write_debug_dump(payload_items: list, attempt_log: list) -> str:
+    """
+    Written only when aligned mode exhausts every retry, so the exact
+    request items and every attempt's raw response can be inspected without
+    needing to re-run (and re-pay for) Whisper + GPT to reproduce it.
+    """
+    OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+    debug_path = OUTPUT_FOLDER / "aligned_debug.json"
+    debug_path.write_text(
+        json.dumps({"items": payload_items, "attempts": attempt_log}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return str(debug_path)
+
+
 def translate_segments_aligned(segments_marked: list) -> dict:
     """
     segments_marked: [{"start", "end", "text", ["is_marker"]}, ...]
@@ -238,11 +257,13 @@ def translate_segments_aligned(segments_marked: list) -> dict:
 
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     data = groups = last_error = None
+    attempt_log = []
     for attempt in range(1, _ALIGNED_MAX_ATTEMPTS + 1):
+        temperature = _ALIGNED_RETRY_TEMPERATURES[min(attempt - 1, len(_ALIGNED_RETRY_TEMPERATURES) - 1)]
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             response_format={"type": "json_object"},
-            temperature=0.3,
+            temperature=temperature,
             messages=[
                 {"role": "system", "content": ALIGNED_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
@@ -252,16 +273,25 @@ def translate_segments_aligned(segments_marked: list) -> dict:
             usage_total[key] = usage_total.get(key, 0) + value
 
         data = _parse_json_response(response.choices[0].message.content)
+        attempt_record = {"attempt": attempt, "temperature": temperature, "response": data}
+        attempt_log.append(attempt_record)
         try:
             groups = _validate_and_build_groups(segments_marked, data.get("sentences", []))
             break
         except ValueError as e:
             last_error = e
-            log.warning(f"Aligned-mode grouping attempt {attempt}/{_ALIGNED_MAX_ATTEMPTS} failed validation: {e}")
+            attempt_record["error"] = str(e)
+            log.warning(
+                f"Aligned-mode grouping attempt {attempt}/{_ALIGNED_MAX_ATTEMPTS} "
+                f"(temperature {temperature}) failed validation: {e}"
+            )
     else:
+        debug_path = _write_debug_dump(payload_items, attempt_log)
         raise ValueError(
             f"Aligned mode: GPT's segment grouping failed validation {_ALIGNED_MAX_ATTEMPTS} times "
-            f"in a row. Last error: {last_error}"
+            f"in a row. Last error: {last_error}\n"
+            f"Full request items and every attempt's raw response were written to {debug_path} "
+            "for troubleshooting, so this doesn't need to be reproduced by re-running Whisper."
         )
 
     sentence_pairs = []
