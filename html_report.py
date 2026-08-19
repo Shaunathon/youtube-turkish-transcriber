@@ -189,7 +189,7 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
 .col.tr .col-label { color: var(--turquoise); }
 .col.en .col-label { color: var(--ink-soft); }
 .col p { margin: 0; font-size: 1.18rem; }
-.col.tr p::first-letter {
+.col.tr p:first-of-type::first-letter {
   font-size: 2.6rem;
   font-weight: 600;
   color: var(--turquoise);
@@ -197,6 +197,13 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
   line-height: 0.8;
   padding: 6px 8px 0 0;
 }
+/* Each sentence is its own paragraph (not one flowing block) so that
+   report.js can independently pad the English side to keep each pair's
+   start roughly aligned with its Turkish counterpart - Turkish sentences
+   tend to run longer, so left unaddressed the two columns drift apart
+   the further into the transcript you read. */
+.sent-line { margin: 0 0 0.6em; }
+.sent-line:last-child { margin-bottom: 0; }
 
 .sent {
   border-radius: 3px;
@@ -261,9 +268,56 @@ SIDEBAR_JS = """// Renders the transcript list into the sidebar from manifest.js
 """
 
 REPORT_JS = """// Turkish/English hover-linking, click-to-seek on the embedded YouTube
-// player, and (when a report was built with --click-to-seek, so sentence
-// spans carry a data-start attribute) playback-position highlighting with
-// autoscroll. No-ops quietly wherever that data isn't present.
+// player, English-column alignment against the Turkish column, and (when a
+// report was built with --click-to-seek, so sentence spans carry a
+// data-start attribute) playback-position highlighting with autoscroll.
+// No-ops quietly wherever that data isn't present.
+
+// Turkish sentences tend to run longer than their English translations, so
+// left alone the two columns drift apart the deeper into the transcript
+// you read. This pads the English side (never the Turkish side) so each
+// pair's start stays within about a line and a half of its counterpart.
+// Runs on every report, not just --click-to-seek ones - this is a pure
+// typography concern, unrelated to timestamps.
+(function () {
+  function alignColumns() {
+    var trCol = document.querySelector('.col.tr');
+    var enCol = document.querySelector('.col.en');
+    if (!trCol || !enCol) return;
+
+    var enLines = enCol.querySelectorAll('.sent-line');
+    enLines.forEach(function (el) { el.style.marginTop = ''; });
+
+    var lineHeight = parseFloat(getComputedStyle(enCol).lineHeight) || 24;
+    var tolerance = lineHeight * 1.5;
+
+    trCol.querySelectorAll('.sent-line').forEach(function (trLine) {
+      var pair = trLine.getAttribute('data-pair');
+      var enLine = enCol.querySelector('.sent-line[data-pair="' + pair + '"]');
+      if (!enLine) return;
+      var diff = trLine.getBoundingClientRect().top - enLine.getBoundingClientRect().top;
+      if (diff > tolerance) {
+        enLine.style.marginTop = diff + 'px';
+      }
+    });
+  }
+
+  function runWhenFontsReady() {
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(alignColumns);
+    } else {
+      alignColumns();
+    }
+  }
+  runWhenFontsReady();
+
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(alignColumns, 200);
+  });
+})();
+
 window.onYouTubeIframeAPIReady = function () {
   var el = document.getElementById('yt-player');
   if (el && window.YT) {
@@ -408,8 +462,15 @@ def slugify(text: str) -> str:
     return text or "video"
 
 
-def _sentence_spans(pairs: list, lang_key: str) -> str:
-    spans = []
+def _sentence_lines(pairs: list, lang_key: str) -> str:
+    """
+    One <p class="sent-line" data-pair="i"> per sentence, rather than one
+    shared paragraph - report.js needs each sentence individually
+    positioned to measure and align the English side against the Turkish
+    side. data-pair is on both the paragraph (used for alignment) and the
+    inner span (used for hover-pairing/click-to-seek, unchanged).
+    """
+    lines = []
     for i, p in enumerate(pairs):
         text = _esc(p.get(lang_key, ""))
         if not text:
@@ -420,8 +481,8 @@ def _sentence_spans(pairs: list, lang_key: str) -> str:
         attrs = f'class="{classes}" data-pair="{i}"'
         if "start" in p:
             attrs += f' data-start="{p["start"]:.2f}"'
-        spans.append(f'<span {attrs}>{text}</span>')
-    return " ".join(spans)
+        lines.append(f'<p class="sent-line" data-pair="{i}"><span {attrs}>{text}</span></p>')
+    return "\n          ".join(lines)
 
 
 def write_shared_assets(output_folder: Path) -> None:
@@ -471,8 +532,8 @@ def build_html_report(
     sentence_pairs = result.get("sentence_pairs", [])
 
     if sentence_pairs:
-        tr_html = f'<p>{_sentence_spans(sentence_pairs, "turkish")}</p>'
-        en_html = f'<p>{_sentence_spans(sentence_pairs, "english")}</p>'
+        tr_html = _sentence_lines(sentence_pairs, "turkish")
+        en_html = _sentence_lines(sentence_pairs, "english")
     else:
         tr_html = '<p class="empty">No transcript available for this clip.</p>'
         en_html = '<p class="empty">Translation unavailable for this clip.</p>'
