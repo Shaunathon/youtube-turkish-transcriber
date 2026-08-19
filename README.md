@@ -5,7 +5,7 @@ Feed it a YouTube video link. For each one it:
 1. **Checks YouTube for an existing *manually-created* Turkish transcript**. If one exists, it's used directly - no Whisper call needed. Auto-generated (ASR) captions are deliberately not used as a substitute - see "Notes & tuning" below for why.
 2. **Otherwise downloads the audio** and transcribes it via the **OpenAI Whisper API**, splitting into multiple parts if the audio is too large for a single request.
 3. **Marks long wordless stretches** - the instructor demonstrating on their instrument instead of talking - as `[[DEMONSTRATION]]` in the transcript. (Skipped when using an existing manual transcript that already tags non-speech passages itself, e.g. `[Müzik]` - see below.)
-4. **Translates to English** and generates a vocabulary + grammar note set, using **OpenAI GPT**.
+4. **Translates to English**, using **OpenAI GPT**, with a Turkish clarinet/makam-music terminology bias baked into the prompt.
 5. **Writes a side-by-side HTML report** per part, with the original YouTube video embedded so you can watch and read along on the same page.
 
 This is a sibling project to `turkish-voice-transcriber` (same report styling), built specifically for long-form instructional video instead of short voice notes.
@@ -90,7 +90,7 @@ Each report (`transcripts/<video-title>.html`) has:
 - **The original YouTube video embedded**, not a separate audio player - watch and read the transcript on the same page. YouTube's own player controls (including playback speed) are available in the embed. If a video has embedding disabled by its uploader, a "Watch on YouTube ↗" link next to the player is the fallback.
 - **`[[DEMONSTRATION]]` markers** wherever there's a gap of `DEMONSTRATION_GAP_SECONDS` (default 7s) or more between spoken segments - including before the first word or after the last, so a long instrumental intro or closing demo gets flagged too. Only added when transcribing via Whisper; skipped for an existing manual transcript, which is left exactly as the uploader wrote it (including any `[Müzik]`/`[Alkış]`-style tags they already added for non-speech passages).
 - **Turkish and English side by side**. Hover a sentence on either side to highlight its counterpart, same as the voice-note tool.
-- **A vocabulary table and grammar notes**, as before.
+- **A footer showing token usage** for that report's GPT translation call(s) - total, prompt, and completion tokens.
 - **A sidebar** listing every transcript processed so far, most recent first.
 
 ### Long videos: split into parts, never stitched
@@ -118,7 +118,7 @@ Running both against the same video writes two separate files (the second gets a
 - **`DEMONSTRATION_GAP_SECONDS`**: lower it if short pauses aren't being flagged, raise it if normal conversational pauses are getting marked as demonstrations.
 - **`SOURCE_LANGUAGE`**: defaults to `tr`; change it if you ever point this at a different language's instructional videos.
 - **`WHISPER_TRANSCRIBE_MODEL` must stay `whisper-1`**: it's the only OpenAI transcription model that returns per-segment timestamps (`response_format="verbose_json"`), which both `[[DEMONSTRATION]]` detection and click-to-seek depend on.
-- **Cost**: same pricing model as `turkish-voice-transcriber` - Whisper transcription (~$0.006/minute of audio) plus a small GPT translation/notes cost. A 30-minute lesson is roughly $0.20 of Whisper time plus a few cents of GPT, likely more in click-to-seek mode since each segment sends more context/output overhead than fewer, longer freeform sentences.
+- **Cost**: same pricing model as `turkish-voice-transcriber` - Whisper transcription (~$0.006/minute of audio) plus a small GPT translation cost (`gpt-4o-mini` by default, currently $0.15/1M input and $0.60/1M output tokens). A 30-minute lesson is roughly $0.20 of Whisper time plus a fraction of a cent of GPT; click-to-seek mode costs a bit more since it makes one call per span between `[[DEMONSTRATION]]` markers instead of one call for the whole transcript. Each report's exact token usage is shown in its footer, and every run's usage is also logged to `transcripts/token_usage.json`.
 - **Temporary files**: downloaded audio (and its chunks, if split) is deleted after each successful run; nothing but the HTML report and shared assets stays in `transcripts/`.
 - **Audio-only downloads aren't always available**: if YouTube blocks audio-only streams outright for a given video/session, this tool falls back to the smallest available combined video+audio stream (≤360p) instead of failing - fine for Whisper (it only needs the audio track), just a somewhat larger/slower temporary download than pure audio would be.
 - **`YT_DLP_COOKIES_BROWSER`**: which browser's YouTube session cookies authorize audio downloads (default `chrome`). Set to empty to disable and rely solely on the PO-token plugin instead - only do this if cookies aren't working for you, since cookies have proven the more reliable path.

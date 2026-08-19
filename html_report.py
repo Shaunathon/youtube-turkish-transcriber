@@ -173,43 +173,14 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
 .sent.seekable:hover { text-decoration-color: var(--coral); }
 .sent.marker { font-family: 'Work Sans', -apple-system, sans-serif; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-style: normal; }
 
-h2 {
-  font-family: 'Work Sans', -apple-system, sans-serif;
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 600;
-  color: var(--coral);
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 10px;
-  margin: 0 0 18px;
-}
-section { margin-bottom: 44px; }
-table { width: 100%; border-collapse: collapse; font-family: 'Work Sans', -apple-system, sans-serif; font-size: 0.94rem; }
-th {
-  text-align: left;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-  color: var(--muted);
-  padding: 8px 12px;
-  background: var(--paper-deep);
-}
-td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-tr:last-child td { border-bottom: none; }
-.tr-word { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 1.08rem; white-space: nowrap; color: var(--ink); }
-.note { color: var(--muted); font-size: 0.86rem; }
-.grammar-item {
-  border-left: 3px solid var(--coral);
-  background: var(--coral-soft);
-  padding: 14px 20px;
-  margin-bottom: 12px;
-  border-radius: 0 4px 4px 0;
-}
-.grammar-topic { font-family: 'Work Sans', -apple-system, sans-serif; font-weight: 600; font-size: 0.9rem; color: var(--ink); margin-bottom: 4px; }
-.grammar-explanation { font-size: 1.02rem; color: var(--ink-soft); }
 .empty { font-family: 'Work Sans', -apple-system, sans-serif; color: var(--muted); font-size: 0.9rem; font-style: normal; }
+
+.page-footer {
+  margin-top: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.page-footer .meta { text-transform: none; letter-spacing: normal; }
 
 @media (max-width: 720px) {
   .page { flex-direction: column; }
@@ -362,10 +333,9 @@ def build_html_report(
     click_to_seek: bool,
     result: dict,
     output_folder: Path,
+    token_usage: Optional[dict] = None,
 ) -> Path:
     sentence_pairs = result.get("sentence_pairs", [])
-    vocabulary = result.get("vocabulary", [])
-    grammar_notes = result.get("grammar_notes", [])
 
     if sentence_pairs:
         tr_html = f'<p>{_sentence_spans(sentence_pairs, "turkish")}</p>'
@@ -374,32 +344,13 @@ def build_html_report(
         tr_html = '<p class="empty">No transcript available for this clip.</p>'
         en_html = '<p class="empty">Translation unavailable for this clip.</p>'
 
-    if vocabulary:
-        vocab_rows = "\n".join(
-            f"""      <tr>
-        <td class="tr-word">{_esc(v.get('turkish', ''))}</td>
-        <td>{_esc(v.get('english', ''))}</td>
-        <td class="note">{_esc(v.get('note', ''))}</td>
-      </tr>"""
-            for v in vocabulary
-        )
-        vocab_html = f"""<table>
-      <tr><th>Turkish</th><th>English</th><th>Note</th></tr>
-{vocab_rows}
-    </table>"""
+    if token_usage and token_usage.get("total_tokens"):
+        footer_html = f"""    <footer class="page-footer">
+      <div class="meta">Token usage this run: {token_usage['total_tokens']:,} total ({token_usage.get('prompt_tokens', 0):,} prompt + {token_usage.get('completion_tokens', 0):,} completion)</div>
+    </footer>
+"""
     else:
-        vocab_html = '<p class="empty">No standout vocabulary flagged for this clip.</p>'
-
-    if grammar_notes:
-        grammar_html = "\n".join(
-            f"""    <div class="grammar-item">
-      <div class="grammar-topic">{_esc(g.get('topic', ''))}</div>
-      <div class="grammar-explanation">{_esc(g.get('explanation', ''))}</div>
-    </div>"""
-            for g in grammar_notes
-        )
-    else:
-        grammar_html = '<p class="empty">No specific grammar points flagged for this clip.</p>'
+        footer_html = ""
 
     embed_src = f"https://www.youtube.com/embed/{video_id}?enablejsapi=1&start={int(embed_start)}"
     if embed_end:
@@ -455,17 +406,7 @@ def build_html_report(
           {en_html}
         </div>
       </div>
-
-      <section>
-        <h2>Vocabulary</h2>
-        {vocab_html}
-      </section>
-
-      <section>
-        <h2>Grammar notes</h2>
-{grammar_html}
-      </section>
-    </div>
+{footer_html}    </div>
   </div>
 </div>
 <script src="manifest.js"></script>

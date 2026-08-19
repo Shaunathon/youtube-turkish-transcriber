@@ -1,6 +1,6 @@
 """
 Sends the Turkish transcript to OpenAI's chat completions API and gets back
-Turkish/English sentence pairs plus vocabulary and grammar notes.
+Turkish/English sentence pairs.
 
 Two modes, chosen by main.py based on the --click-to-seek flag:
 
@@ -42,8 +42,7 @@ _MUSIC_TERMINOLOGY_GUIDANCE = """
 Domain context: these transcripts are Turkish clarinet instruction, often covering Turkish \
 makam (modal) music theory and ornamentation technique. When a Turkish word or phrase has more \
 than one possible English meaning, choose whichever meaning fits clarinet playing and Turkish \
-makam music theory specifically - never a generic or unrelated everyday sense of the word. This \
-applies to the translation itself and to any vocabulary/grammar notes drawn from it.
+makam music theory specifically - never a generic or unrelated everyday sense of the word.
 
 Specific terminology:
 - "çarpma"/"çarpmalar" (also "çatma"/"çatmalar" in casual/dialect speech) names a grace-note \
@@ -60,32 +59,16 @@ play X"), keep that title in its original Turkish within the English translation
 translating it - it is a proper title, not descriptive text.
 """
 
-_VOCAB_GRAMMAR_GUIDELINES = """
-Guidelines:
-- vocabulary: 5-12 words/phrases genuinely worth learning for an intermediate learner. Skip \
-trivial ones (ve, bir, bu) unless the usage is notable (idiom, unusual case, etc).
-- grammar_notes: 2-6 structures actually present in this transcript (suffixes, tenses, cases, \
-particles, word order). Quote the relevant word or phrase from the transcript itself rather \
-than giving a generic textbook explanation.
-- If the transcript is very short, it is fine to return fewer vocabulary/grammar/sentence items.
-"""
-
-FREEFORM_SYSTEM_PROMPT = """You are a Turkish-English translator and language tutor helping an \
-intermediate learner. You will be given a Turkish transcript from an instructional video (e.g. \
-a music lesson), so it may be casual, contain false starts, or minor transcription errors - \
-work around those sensibly. It may also contain the literal token [[DEMONSTRATION]] marking a \
-wordless passage. Respond with ONLY valid JSON (no markdown fences, no commentary) matching \
-exactly this shape:
+FREEFORM_SYSTEM_PROMPT = """You are a Turkish-English translator helping an intermediate \
+learner. You will be given a Turkish transcript from an instructional video (e.g. a music \
+lesson), so it may be casual, contain false starts, or minor transcription errors - work around \
+those sensibly. It may also contain the literal token [[DEMONSTRATION]] marking a wordless \
+passage. Respond with ONLY valid JSON (no markdown fences, no commentary) matching exactly this \
+shape:
 
 {
   "sentence_pairs": [
     {"turkish": "one Turkish sentence, reproduced from the transcript, OR the literal token [[DEMONSTRATION]]", "english": "the matching English sentence, OR [[DEMONSTRATION]] unchanged"}
-  ],
-  "vocabulary": [
-    {"turkish": "word or phrase as it appears", "english": "meaning", "note": "brief usage note, optional, can be empty string"}
-  ],
-  "grammar_notes": [
-    {"topic": "short topic name, e.g. 'Passive voice (-il/-in)'", "explanation": "1-3 sentences, grounded in the actual word/phrase from this transcript"}
   ]
 }
 
@@ -101,17 +84,16 @@ own pair (turkish and english both exactly "[[DEMONSTRATION]]"), never merged in
 neighboring sentence. Concatenating all "turkish" fields in order, with single spaces between \
 them, must reproduce the original transcript.
 
-The literal token [[DEMONSTRATION]] is not Turkish - never translate it, explain it, or treat \
-it as vocabulary/grammar. Leave it exactly as-is wherever it must appear in your output.
-""" + _MUSIC_TERMINOLOGY_GUIDANCE + _VOCAB_GRAMMAR_GUIDELINES
+The literal token [[DEMONSTRATION]] is not Turkish - never translate it or explain it. Leave it \
+exactly as-is wherever it must appear in your output.
+""" + _MUSIC_TERMINOLOGY_GUIDANCE
 
-ALIGNED_SYSTEM_PROMPT = """You are a Turkish-English translator and language tutor helping an \
-intermediate learner. You will be given one continuous stretch of a Turkish transcript from an \
-instructional video (e.g. a music lesson), already split into numbered items with fixed index \
-boundaries - {"index": N, "turkish": "..."}. Each item is a real segment of speech (timestamped, \
-though you don't see the timestamp), often just a clause or short phrase rather than a full \
-sentence. It may be casual, contain false starts, or minor transcription errors - work around \
-those sensibly.
+ALIGNED_SYSTEM_PROMPT = """You are a Turkish-English translator helping an intermediate \
+learner. You will be given one continuous stretch of a Turkish transcript from an instructional \
+video (e.g. a music lesson), already split into numbered items with fixed index boundaries - \
+{"index": N, "turkish": "..."}. Each item is a real segment of speech (timestamped, though you \
+don't see the timestamp), often just a clause or short phrase rather than a full sentence. It \
+may be casual, contain false starts, or minor transcription errors - work around those sensibly.
 
 Group consecutive items into complete, natural sentences, then translate each group as a whole \
 into one complete, natural English sentence - do NOT force a 1:1 translation per item; merge as \
@@ -127,12 +109,6 @@ Respond with ONLY valid JSON (no markdown fences, no commentary) matching exactl
 {
   "sentences": [
     {"start_index": 0, "end_index": 2, "english": "one complete, natural English sentence covering items 0 through 2"}
-  ],
-  "vocabulary": [
-    {"turkish": "word or phrase as it appears", "english": "meaning", "note": "brief usage note, optional, can be empty string"}
-  ],
-  "grammar_notes": [
-    {"topic": "short topic name, e.g. 'Passive voice (-il/-in)'", "explanation": "1-3 sentences, grounded in the actual word/phrase from this transcript"}
   ]
 }
 
@@ -144,7 +120,7 @@ group's start_index must equal the previous group's end_index + 1, starting at 0
 with the final group's end_index equal to the last valid index - with no item, including the \
 very first and very last, left out of every group. Omitting an item is the most common mistake \
 here; double-check the full range is covered before responding, especially on longer inputs.
-""" + _MUSIC_TERMINOLOGY_GUIDANCE + _VOCAB_GRAMMAR_GUIDELINES
+""" + _MUSIC_TERMINOLOGY_GUIDANCE
 
 
 def _extract_usage(response) -> dict:
@@ -173,8 +149,8 @@ def _parse_json_response(content: str) -> dict:
 def translate_freeform(segments_marked: list) -> dict:
     """
     segments_marked: [{"start", "end", "text", ["is_marker"]}, ...]
-    Returns {"sentence_pairs": [{"turkish", "english"}], "vocabulary": [...],
-    "grammar_notes": [...], "usage": {...}}. Pairs carry no timestamps.
+    Returns {"sentence_pairs": [{"turkish", "english"}], "usage": {...}}.
+    Pairs carry no timestamps.
     """
     turkish_text = " ".join(s["text"] for s in segments_marked)
 
@@ -190,8 +166,6 @@ def translate_freeform(segments_marked: list) -> dict:
     data = _parse_json_response(response.choices[0].message.content)
 
     data.setdefault("sentence_pairs", [])
-    data.setdefault("vocabulary", [])
-    data.setdefault("grammar_notes", [])
     data["usage"] = _extract_usage(response)
     return data
 
@@ -280,23 +254,13 @@ def _split_into_spans(segments_marked: list) -> list:
     return spans
 
 
-def _dedupe_by_key(items: list, key: str) -> list:
-    seen, result = set(), []
-    for item in items:
-        k = (item.get(key) or "").strip().lower()
-        if k and k not in seen:
-            seen.add(k)
-            result.append(item)
-    return result
-
-
 def _group_span(span_segments: list) -> tuple:
     """
     Calls GPT to group one marker-free span into complete sentences with
     translations, retrying with escalating temperature on validation
     failure (GPT occasionally drops an item, more often on longer spans).
-    Returns (groups, vocabulary, grammar_notes, usage_dict). Raises
-    ValueError (after writing a debug dump) if every retry fails.
+    Returns (groups, usage_dict). Raises ValueError (after writing a debug
+    dump) if every retry fails.
     """
     payload_items = [{"index": i, "turkish": s["text"]} for i, s in enumerate(span_segments)]
     user_content = json.dumps(
@@ -342,7 +306,7 @@ def _group_span(span_segments: list) -> tuple:
             "for troubleshooting, so this doesn't need to be reproduced by re-running Whisper."
         )
 
-    return groups, data.get("vocabulary", []), data.get("grammar_notes", []), usage_total
+    return groups, usage_total
 
 
 def translate_segments_aligned(segments_marked: list) -> dict:
@@ -357,7 +321,6 @@ def translate_segments_aligned(segments_marked: list) -> dict:
     spans = _split_into_spans(segments_marked)
 
     sentence_pairs = []
-    all_vocabulary, all_grammar_notes = [], []
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     span_index = 0
@@ -376,9 +339,7 @@ def translate_segments_aligned(segments_marked: list) -> dict:
         if global_start != i:
             raise RuntimeError(f"Internal error: span/segment walk out of sync ({global_start} != {i}).")
 
-        groups, vocabulary, grammar_notes, usage = _group_span(span_segments)
-        all_vocabulary.extend(vocabulary)
-        all_grammar_notes.extend(grammar_notes)
+        groups, usage = _group_span(span_segments)
         for key, value in usage.items():
             usage_total[key] = usage_total.get(key, 0) + value
 
@@ -398,7 +359,5 @@ def translate_segments_aligned(segments_marked: list) -> dict:
 
     return {
         "sentence_pairs": sentence_pairs,
-        "vocabulary": _dedupe_by_key(all_vocabulary, "turkish"),
-        "grammar_notes": _dedupe_by_key(all_grammar_notes, "topic"),
         "usage": usage_total,
     }

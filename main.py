@@ -129,6 +129,7 @@ def process_video(url: str, click_to_seek: bool) -> list:
             click_to_seek=click_to_seek,
             result=result,
             output_folder=OUTPUT_FOLDER,
+            token_usage=usage,
         )
         log.info(f"Done -> {out_path}")
         out_paths.append(out_path)
