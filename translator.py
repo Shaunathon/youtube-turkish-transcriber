@@ -38,6 +38,27 @@ _ALIGNED_MAX_ATTEMPTS = 3
 # completions rather than exploring genuinely different groupings.
 _ALIGNED_RETRY_TEMPERATURES = [0.3, 0.6, 0.9]
 
+_MUSIC_TERMINOLOGY_GUIDANCE = """
+Domain context: these transcripts are Turkish clarinet instruction, often covering Turkish \
+makam (modal) music theory and ornamentation technique. When a Turkish word or phrase has more \
+than one possible English meaning, choose whichever meaning fits clarinet playing and Turkish \
+makam music theory specifically - never a generic or unrelated everyday sense of the word. This \
+applies to the translation itself and to any vocabulary/grammar notes drawn from it.
+
+Specific terminology:
+- "çarpma"/"çarpmalar" (also "çatma"/"çatmalar" in casual/dialect speech) names a grace-note \
+ornament, not a literal "hit," "strike," "clash," or "arpeggio." Translate it as "mordent": \
+"üst çarpma"/"üst çatma" = "upper mordent", "alt çarpma"/"alt çatma" = "lower mordent". Use \
+"mordent(s)" generically when no direction is specified.
+- Makam names (e.g. Kürdi, Hicaz, Nihavent, Rast, Hüseyni, Uşşak, Saba, Hüzzam, \
+Kürdilihicazkar) are proper nouns naming a specific musical mode, not ordinary words - never \
+translate them. Keep them as their standard English musicological spelling, dropping Turkish \
+diacritics ("Kürdi" -> "Kurdi", etc.), and spell each one consistently throughout.
+- If the instructor names or quotes a specific song or piece (e.g. its opening line, or "I'll \
+play X"), keep that title in its original Turkish within the English translation rather than \
+translating it - it is a proper title, not descriptive text.
+"""
+
 _VOCAB_GRAMMAR_GUIDELINES = """
 Guidelines:
 - vocabulary: 5-12 words/phrases genuinely worth learning for an intermediate learner. Skip \
@@ -81,7 +102,7 @@ them, must reproduce the original transcript.
 
 The literal token [[DEMONSTRATION]] is not Turkish - never translate it, explain it, or treat \
 it as vocabulary/grammar. Leave it exactly as-is wherever it must appear in your output.
-""" + _VOCAB_GRAMMAR_GUIDELINES
+""" + _MUSIC_TERMINOLOGY_GUIDANCE + _VOCAB_GRAMMAR_GUIDELINES
 
 ALIGNED_SYSTEM_PROMPT = """You are a Turkish-English translator and language tutor helping an \
 intermediate learner. You will be given one continuous stretch of a Turkish transcript from an \
@@ -122,7 +143,7 @@ group's start_index must equal the previous group's end_index + 1, starting at 0
 with the final group's end_index equal to the last valid index - with no item, including the \
 very first and very last, left out of every group. Omitting an item is the most common mistake \
 here; double-check the full range is covered before responding, especially on longer inputs.
-""" + _VOCAB_GRAMMAR_GUIDELINES
+""" + _MUSIC_TERMINOLOGY_GUIDANCE + _VOCAB_GRAMMAR_GUIDELINES
 
 
 def _extract_usage(response) -> dict:
