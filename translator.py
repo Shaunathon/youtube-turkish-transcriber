@@ -7,14 +7,17 @@ Two modes, chosen by main.py based on the --click-to-seek flag:
 - translate_freeform: GPT freely resplits the whole transcript into
   natural, flowing sentences. Reads best, but the resulting pairs carry no
   timestamps.
-- translate_segments_aligned: GPT groups the timestamped Whisper/caption
-  segments into complete, natural sentences (never spanning a
-  [[DEMONSTRATION]] marker) and translates each group as a whole - so
-  prose quality matches freeform, while every pair still carries the
-  timestamp of the segment it starts at (from the first segment in its
-  group), driving click-to-seek. The Turkish side of each pair is
-  reconstructed directly from the source segments rather than trusted to
-  GPT, so it's always exactly faithful - no drift-checking needed.
+- translate_segments_aligned: segments_marked is first split into
+  marker-free spans (chunks between [[DEMONSTRATION]] markers). GPT groups
+  each span's timestamped segments into complete, natural sentences and
+  translates each group as a whole - so prose quality matches freeform,
+  while every pair still carries the timestamp of the segment it starts at
+  (from the first segment in its group), driving click-to-seek. Because a
+  span never contains a marker, "never span a marker" isn't a rule GPT has
+  to remember and follow - it's structurally impossible to break. The
+  Turkish side of each pair is reconstructed directly from the source
+  segments rather than trusted to GPT, so it's always exactly faithful -
+  no drift-checking needed.
 
 Both preserve [[DEMONSTRATION]] markers as their own standalone pair.
 """
@@ -81,18 +84,21 @@ it as vocabulary/grammar. Leave it exactly as-is wherever it must appear in your
 """ + _VOCAB_GRAMMAR_GUIDELINES
 
 ALIGNED_SYSTEM_PROMPT = """You are a Turkish-English translator and language tutor helping an \
-intermediate learner. You will be given a Turkish transcript from an instructional video (e.g. \
-a music lesson), already split into numbered items with fixed index boundaries. Each item is \
-either:
-- {"index": N, "turkish": "..."} - a real segment of speech (timestamped, though you don't see \
-the timestamp), often just a clause or short phrase rather than a full sentence
-- {"index": N, "marker": true} - a wordless passage (e.g. the instructor playing an instrument \
-instead of talking). Never translate these, and never let a sentence group span across one.
+intermediate learner. You will be given one continuous stretch of a Turkish transcript from an \
+instructional video (e.g. a music lesson), already split into numbered items with fixed index \
+boundaries - {"index": N, "turkish": "..."}. Each item is a real segment of speech (timestamped, \
+though you don't see the timestamp), often just a clause or short phrase rather than a full \
+sentence. It may be casual, contain false starts, or minor transcription errors - work around \
+those sensibly.
 
-Group consecutive speech items into complete, natural sentences, then translate each group as a \
-whole into one complete, natural English sentence - do NOT force a 1:1 translation per item; \
-merge as many consecutive speech items as needed to form a proper sentence. It may be casual, \
-contain false starts, or minor transcription errors - work around those sensibly.
+Group consecutive items into complete, natural sentences, then translate each group as a whole \
+into one complete, natural English sentence - do NOT force a 1:1 translation per item; merge as \
+many consecutive items as needed to form a proper sentence.
+
+Even a very short or seemingly trivial item - a single word like "Şimdi." ("Now.") or "Değil." \
+("Not."/"Isn't it.") - must still end up inside exactly one group, never silently dropped for \
+feeling too minor to be its own sentence. Merge it into an adjacent group if that reads more \
+naturally, but it must never be omitted from every group.
 
 Respond with ONLY valid JSON (no markdown fences, no commentary) matching exactly this shape:
 
@@ -108,18 +114,14 @@ Respond with ONLY valid JSON (no markdown fences, no commentary) matching exactl
   ]
 }
 
-Critical rules for "sentences": every speech item must belong to exactly one group, listed in \
-transcript order. A group's start_index/end_index must span a contiguous run of speech-item \
-indices with no marker index anywhere inside that range - if a marker sits between two speech \
-items, they belong to different groups even if the sentence feels unfinished. Never reorder, \
-skip, or duplicate an index.
-
-You will be told the total number of items up front. Before finalizing your answer, explicitly \
-verify: walking your "sentences" array in order, each group's start_index must equal the \
-previous group's end_index + 1 (or the index right after a marker, if one sits in between) - \
-with no item, including the very last one, left out of every group. Omitting even a single item \
-is the most common mistake here; double-check the full range is covered before responding, \
-especially on longer transcripts with many items.
+Critical rules for "sentences": every item must belong to exactly one group, listed in \
+transcript order, covering the full range from index 0 to the last index with no gaps, no \
+reordering, no duplicates. You will be told the total number of items up front. Before \
+finalizing your answer, explicitly verify: walking your "sentences" array in order, each \
+group's start_index must equal the previous group's end_index + 1, starting at 0 and ending \
+with the final group's end_index equal to the last valid index - with no item, including the \
+very first and very last, left out of every group. Omitting an item is the most common mistake \
+here; double-check the full range is covered before responding, especially on longer inputs.
 """ + _VOCAB_GRAMMAR_GUIDELINES
 
 
@@ -231,26 +233,50 @@ def _write_debug_dump(payload_items: list, attempt_log: list) -> str:
     return str(debug_path)
 
 
-def translate_segments_aligned(segments_marked: list) -> dict:
+def _split_into_spans(segments_marked: list) -> list:
     """
-    segments_marked: [{"start", "end", "text", ["is_marker"]}, ...]
-    Returns the same shape as translate_freeform, but every sentence pair
-    also carries "start"/"end" (seconds): the timestamp of the first/last
-    segment in its group. The Turkish side is reconstructed directly from
-    the source segments (always exactly faithful); only the English side
-    and the grouping itself come from GPT.
+    Splits segments_marked into maximal contiguous runs of non-marker
+    segments: [(global_start_index, span_segments), ...]. Markers are the
+    natural boundaries between spans, so a span itself never contains one -
+    GPT is never asked to reason about markers at all for aligned mode,
+    eliminating "a group illegally spans a marker" as a possible mistake
+    rather than relying on a prompt rule to prevent it.
+    """
+    spans = []
+    current, current_start = [], None
+    for i, s in enumerate(segments_marked):
+        if s.get("is_marker"):
+            if current:
+                spans.append((current_start, current))
+                current, current_start = [], None
+        else:
+            if not current:
+                current_start = i
+            current.append(s)
+    if current:
+        spans.append((current_start, current))
+    return spans
 
-    GPT occasionally drops an item from its grouping entirely (a known
-    failure mode on longer, index-heavy structured output) - _validate_and_
-    build_groups catches that rather than silently producing a wrong
-    timestamp, so this retries a few times on that specific failure before
-    giving up, since it's usually just sampling variance rather than a
-    transcript GPT can't handle at all.
+
+def _dedupe_by_key(items: list, key: str) -> list:
+    seen, result = set(), []
+    for item in items:
+        k = (item.get(key) or "").strip().lower()
+        if k and k not in seen:
+            seen.add(k)
+            result.append(item)
+    return result
+
+
+def _group_span(span_segments: list) -> tuple:
     """
-    payload_items = [
-        {"index": i, "marker": True} if s.get("is_marker") else {"index": i, "turkish": s["text"]}
-        for i, s in enumerate(segments_marked)
-    ]
+    Calls GPT to group one marker-free span into complete sentences with
+    translations, retrying with escalating temperature on validation
+    failure (GPT occasionally drops an item, more often on longer spans).
+    Returns (groups, vocabulary, grammar_notes, usage_dict). Raises
+    ValueError (after writing a debug dump) if every retry fails.
+    """
+    payload_items = [{"index": i, "turkish": s["text"]} for i, s in enumerate(span_segments)]
     user_content = json.dumps(
         {"total_items": len(payload_items), "items": payload_items}, ensure_ascii=False
     )
@@ -276,26 +302,44 @@ def translate_segments_aligned(segments_marked: list) -> dict:
         attempt_record = {"attempt": attempt, "temperature": temperature, "response": data}
         attempt_log.append(attempt_record)
         try:
-            groups = _validate_and_build_groups(segments_marked, data.get("sentences", []))
+            groups = _validate_and_build_groups(span_segments, data.get("sentences", []))
             break
         except ValueError as e:
             last_error = e
             attempt_record["error"] = str(e)
             log.warning(
-                f"Aligned-mode grouping attempt {attempt}/{_ALIGNED_MAX_ATTEMPTS} "
+                f"Aligned-mode span grouping attempt {attempt}/{_ALIGNED_MAX_ATTEMPTS} "
                 f"(temperature {temperature}) failed validation: {e}"
             )
     else:
         debug_path = _write_debug_dump(payload_items, attempt_log)
         raise ValueError(
             f"Aligned mode: GPT's segment grouping failed validation {_ALIGNED_MAX_ATTEMPTS} times "
-            f"in a row. Last error: {last_error}\n"
+            f"in a row for one span. Last error: {last_error}\n"
             f"Full request items and every attempt's raw response were written to {debug_path} "
             "for troubleshooting, so this doesn't need to be reproduced by re-running Whisper."
         )
 
+    return groups, data.get("vocabulary", []), data.get("grammar_notes", []), usage_total
+
+
+def translate_segments_aligned(segments_marked: list) -> dict:
+    """
+    segments_marked: [{"start", "end", "text", ["is_marker"]}, ...]
+    Returns the same shape as translate_freeform, but every sentence pair
+    also carries "start"/"end" (seconds): the timestamp of the first/last
+    segment in its group. The Turkish side is reconstructed directly from
+    the source segments (always exactly faithful); only the English side
+    and the grouping itself come from GPT, one marker-free span at a time.
+    """
+    spans = _split_into_spans(segments_marked)
+
     sentence_pairs = []
-    i, g = 0, 0
+    all_vocabulary, all_grammar_notes = [], []
+    usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    span_index = 0
+    i = 0
     while i < len(segments_marked):
         seg = segments_marked[i]
         if seg.get("is_marker"):
@@ -304,21 +348,35 @@ def translate_segments_aligned(segments_marked: list) -> dict:
                 "start": seg["start"], "end": seg["end"],
             })
             i += 1
-        else:
-            group = groups[g]
-            turkish_text = " ".join(segments_marked[j]["text"] for j in range(group["start_index"], group["end_index"] + 1))
+            continue
+
+        global_start, span_segments = spans[span_index]
+        if global_start != i:
+            raise RuntimeError(f"Internal error: span/segment walk out of sync ({global_start} != {i}).")
+
+        groups, vocabulary, grammar_notes, usage = _group_span(span_segments)
+        all_vocabulary.extend(vocabulary)
+        all_grammar_notes.extend(grammar_notes)
+        for key, value in usage.items():
+            usage_total[key] = usage_total.get(key, 0) + value
+
+        for group in groups:
+            g_start = global_start + group["start_index"]
+            g_end = global_start + group["end_index"]
+            turkish_text = " ".join(segments_marked[j]["text"] for j in range(g_start, g_end + 1))
             sentence_pairs.append({
                 "turkish": turkish_text,
                 "english": group.get("english", ""),
-                "start": segments_marked[group["start_index"]]["start"],
-                "end": segments_marked[group["end_index"]]["end"],
+                "start": segments_marked[g_start]["start"],
+                "end": segments_marked[g_end]["end"],
             })
-            i = group["end_index"] + 1
-            g += 1
+
+        i = global_start + len(span_segments)
+        span_index += 1
 
     return {
         "sentence_pairs": sentence_pairs,
-        "vocabulary": data.get("vocabulary", []),
-        "grammar_notes": data.get("grammar_notes", []),
+        "vocabulary": _dedupe_by_key(all_vocabulary, "turkish"),
+        "grammar_notes": _dedupe_by_key(all_grammar_notes, "topic"),
         "usage": usage_total,
     }
