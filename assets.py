@@ -1,19 +1,10 @@
 """
-Builds the side-by-side HTML transcript reports, plus the shared assets
-they all reference: styles.css, sidebar.js, report.js, and manifest.js.
-
-Each report.html is just markup; the sidebar, styling, and interactivity
-live in the shared files so every page reflects the same up-to-date
-component instead of baking a copy into every generated file.
+Static shared assets every report page references: styles.css,
+sidebar.js, and report.js. Content lives here once and gets rewritten to
+disk on every run, so every report page - old or new - reflects the same
+up-to-date component instead of baking a copy into each generated file.
 """
-import html
-import json
-import re
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
-from demonstration import DEMONSTRATION_TOKEN
 
 CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Work+Sans:wght@400;500;600&display=swap');
@@ -122,21 +113,8 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
   overflow: hidden;
 }
 .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-.video-controls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  margin-top: 8px;
-}
-.watch-on-youtube {
-  font-family: 'Work Sans', -apple-system, sans-serif;
-  font-size: 0.8rem;
-  color: var(--coral);
-  text-decoration: none;
-}
-.watch-on-youtube:hover { text-decoration: underline; }
 .autoscroll-toggle {
+  margin-top: 8px;
   font-family: 'Work Sans', -apple-system, sans-serif;
   font-size: 0.76rem;
   font-weight: 600;
@@ -431,172 +409,8 @@ window.onYouTubeIframeAPIReady = function () {
 """
 
 
-def _esc(text: str) -> str:
-    return html.escape(text or "").replace("\n", "<br>")
-
-
-_TR_TRANSLITERATE = str.maketrans({
-    "ı": "i", "İ": "I", "ş": "s", "Ş": "S", "ç": "c", "Ç": "C",
-    "ğ": "g", "Ğ": "G", "ö": "o", "Ö": "O", "ü": "u", "Ü": "U",
-})
-
-
-def slugify(text: str) -> str:
-    text = text.translate(_TR_TRANSLITERATE)
-    text = re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-")
-    return text or "video"
-
-
-def _sentence_lines(pairs: list, lang_key: str) -> str:
-    """
-    One <p class="sent-line" data-pair="i"> per sentence, rather than one
-    shared paragraph - report.js needs each sentence individually
-    positioned to measure and align the English side against the Turkish
-    side. data-pair is on both the paragraph (used for alignment) and the
-    inner span (used for hover-pairing/click-to-seek, unchanged).
-    """
-    lines = []
-    for i, p in enumerate(pairs):
-        text = _esc(p.get(lang_key, ""))
-        if not text:
-            continue
-        classes = "sent"
-        if p.get("turkish") == DEMONSTRATION_TOKEN:
-            classes += " marker"
-        attrs = f'class="{classes}" data-pair="{i}"'
-        if "start" in p:
-            attrs += f' data-start="{p["start"]:.2f}"'
-        lines.append(f'<p class="sent-line" data-pair="{i}"><span {attrs}>{text}</span></p>')
-    return "\n          ".join(lines)
-
-
 def write_shared_assets(output_folder: Path) -> None:
     output_folder.mkdir(parents=True, exist_ok=True)
     (output_folder / "styles.css").write_text(CSS, encoding="utf-8")
     (output_folder / "sidebar.js").write_text(SIDEBAR_JS, encoding="utf-8")
     (output_folder / "report.js").write_text(REPORT_JS, encoding="utf-8")
-
-
-def update_manifest(output_folder: Path) -> None:
-    entries = []
-    for report_path in output_folder.glob("*.html"):
-        if report_path.stem == "index":
-            continue
-        entries.append({"file": report_path.name, "title": report_path.stem.replace("-", " "), "mtime": report_path.stat().st_mtime})
-    entries.sort(key=lambda e: (e["mtime"], e["file"]), reverse=True)
-    for e in entries:
-        del e["mtime"]
-
-    manifest_js = "window.TRANSCRIPT_MANIFEST = " + json.dumps(entries, ensure_ascii=False, indent=2) + ";\n"
-    output_folder.mkdir(parents=True, exist_ok=True)
-    (output_folder / "manifest.js").write_text(manifest_js, encoding="utf-8")
-
-
-def report_stem(video_title: str, part: Optional[int]) -> str:
-    stem = slugify(video_title)
-    if part:
-        stem += f"-part-{part}"
-    return stem
-
-
-def build_html_report(
-    video_title: str,
-    video_id: str,
-    embed_start: float,
-    embed_end: Optional[float],
-    part: Optional[int],
-    total_parts: Optional[int],
-    transcript_source: str,
-    result: dict,
-    output_folder: Path,
-    token_usage: Optional[dict] = None,
-) -> Path:
-    sentence_pairs = result.get("sentence_pairs", [])
-
-    if sentence_pairs:
-        tr_html = _sentence_lines(sentence_pairs, "turkish")
-        en_html = _sentence_lines(sentence_pairs, "english")
-    else:
-        tr_html = '<p class="empty">No transcript available for this clip.</p>'
-        en_html = '<p class="empty">Translation unavailable for this clip.</p>'
-
-    if token_usage and token_usage.get("total_tokens"):
-        footer_html = f"""    <footer class="page-footer">
-      <div class="meta">Token usage this run: {token_usage['total_tokens']:,} total ({token_usage.get('prompt_tokens', 0):,} prompt + {token_usage.get('completion_tokens', 0):,} completion)</div>
-    </footer>
-"""
-    else:
-        footer_html = ""
-
-    embed_src = f"https://www.youtube.com/embed/{video_id}?enablejsapi=1&start={int(embed_start)}"
-    if embed_end:
-        embed_src += f"&end={int(embed_end)}"
-    watch_url = f"https://www.youtube.com/watch?v={video_id}&t={int(embed_start)}s"
-    video_html = f"""  <div class="video-embed-wrap">
-    <div class="video-embed">
-      <iframe id="yt-player" src="{html.escape(embed_src)}" title="{_esc(video_title)}"
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-        allowfullscreen></iframe>
-    </div>
-    <div class="video-controls">
-      <a class="watch-on-youtube" href="{html.escape(watch_url)}" target="_blank" rel="noopener noreferrer">Watch on YouTube &#8599;</a>
-      <button type="button" id="autoscroll-toggle" class="autoscroll-toggle" disabled>Autoscroll: active</button>
-    </div>
-  </div>
-"""
-
-    display_title = video_title
-    if part:
-        display_title += f" — Part {part}" + (f" of {total_parts}" if total_parts else "")
-
-    timestamp = datetime.now().strftime("%B %d, %Y · %I:%M %p")
-    title = html.escape(display_title)
-
-    doc = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — Turkish video transcript</title>
-<link rel="stylesheet" href="styles.css">
-</head>
-<body>
-<div class="page">
-  <nav class="sidebar">
-    <div class="sidebar-title">Transcripts</div>
-    <div class="sidebar-list" id="sidebar-list">Loading&hellip;</div>
-  </nav>
-  <div class="content">
-    <div class="ornament-rule"></div>
-    <div class="wrap">
-      <header>
-        <h1>{title}</h1>
-        <div class="meta">Turkish video transcript &middot; {timestamp} &middot; {html.escape(transcript_source)}</div>
-      </header>
-{video_html}
-      <div class="columns">
-        <div class="col tr">
-          <div class="col-label">Türkçe</div>
-          {tr_html}
-        </div>
-        <div class="col en">
-          <div class="col-label">English</div>
-          {en_html}
-        </div>
-      </div>
-{footer_html}    </div>
-  </div>
-</div>
-<script src="manifest.js"></script>
-<script src="sidebar.js" defer></script>
-<script src="report.js"></script>
-<script src="https://www.youtube.com/iframe_api"></script>
-</body>
-</html>
-"""
-
-    output_folder.mkdir(parents=True, exist_ok=True)
-    stem = report_stem(video_title, part)
-    out_path = output_folder / f"{stem}.html"
-    out_path.write_text(doc, encoding="utf-8")
-    return out_path

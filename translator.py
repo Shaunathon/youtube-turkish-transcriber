@@ -2,17 +2,17 @@
 Sends the Turkish transcript to OpenAI's chat completions API and gets back
 Turkish/English sentence pairs with timestamps.
 
-translate_segments_aligned: segments_marked is first split into marker-free
-spans (chunks between [[DEMONSTRATION]] markers, which is preserved as its
-own standalone pair). GPT groups each span's timestamped segments into
-complete, natural sentences and translates each group as a whole - so
-prose quality reads naturally, while every pair still carries the
-timestamp of the segment it starts at (from the first segment in its
-group), driving click-to-seek. Because a span never contains a marker,
-"never span a marker" isn't a rule GPT has to remember and follow - it's
-structurally impossible to break. The Turkish side of each pair is
-reconstructed directly from the source segments rather than trusted to
-GPT, so it's always exactly faithful - no drift-checking needed.
+translate(): segments_marked is first split into marker-free spans (chunks
+between [[DEMONSTRATION]] markers, which is preserved as its own standalone
+pair). GPT groups each span's timestamped segments into complete, natural
+sentences and translates each group as a whole - so prose quality reads
+naturally, while every pair still carries the timestamp of the segment it
+starts at (from the first segment in its group), driving click-to-seek.
+Because a span never contains a marker, "never span a marker" isn't a rule
+GPT has to remember and follow - it's structurally impossible to break.
+The Turkish side of each pair is reconstructed directly from the source
+segments rather than trusted to GPT, so it's always exactly faithful - no
+drift-checking needed.
 """
 import json
 import logging
@@ -25,11 +25,11 @@ from demonstration import DEMONSTRATION_TOKEN
 log = logging.getLogger("youtube-transcriber")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-_ALIGNED_MAX_ATTEMPTS = 3
+_MAX_ATTEMPTS = 3
 # Escalate temperature on retry - two failed attempts landing on the exact
 # same gap at the same low temperature suggests sampling near-identical
 # completions rather than exploring genuinely different groupings.
-_ALIGNED_RETRY_TEMPERATURES = [0.3, 0.6, 0.9]
+_RETRY_TEMPERATURES = [0.3, 0.6, 0.9]
 
 _MUSIC_TERMINOLOGY_GUIDANCE = """
 Domain context: these transcripts are Turkish clarinet instruction, often covering Turkish \
@@ -52,12 +52,12 @@ play X"), keep that title in its original Turkish within the English translation
 translating it - it is a proper title, not descriptive text.
 """
 
-ALIGNED_SYSTEM_PROMPT = """You are a Turkish-English translator helping an intermediate \
-learner. You will be given one continuous stretch of a Turkish transcript from an instructional \
-video (e.g. a music lesson), already split into numbered items with fixed index boundaries - \
-{"index": N, "turkish": "..."}. Each item is a real segment of speech (timestamped, though you \
-don't see the timestamp), often just a clause or short phrase rather than a full sentence. It \
-may be casual, contain false starts, or minor transcription errors - work around those sensibly.
+SYSTEM_PROMPT = """You are a Turkish-English translator helping an intermediate learner. You \
+will be given one continuous stretch of a Turkish transcript from an instructional video (e.g. \
+a music lesson), already split into numbered items with fixed index boundaries - {"index": N, \
+"turkish": "..."}. Each item is a real segment of speech (timestamped, though you don't see the \
+timestamp), often just a clause or short phrase rather than a full sentence. It may be casual, \
+contain false starts, or minor transcription errors - work around those sensibly.
 
 Group consecutive items into complete, natural sentences, then translate each group as a whole \
 into one complete, natural English sentence - do NOT force a 1:1 translation per item; merge as \
@@ -130,25 +130,25 @@ def _validate_and_build_groups(segments_marked: list, raw_groups: list) -> list:
     for g in groups:
         start, end = g.get("start_index"), g.get("end_index")
         if not isinstance(start, int) or not isinstance(end, int) or not (0 <= start <= end < n):
-            raise ValueError(f"Aligned mode: group has an invalid index range: {g}")
+            raise ValueError(f"Group has an invalid index range: {g}")
         if start != cursor:
             raise ValueError(
-                f"Aligned mode: expected the next group to start at index {cursor} (skipping any "
-                f"marker items), got {start} ({g}). Groups must cover every speech item exactly "
-                "once, in order, with no gaps."
+                f"Expected the next group to start at index {cursor} (skipping any marker "
+                f"items), got {start} ({g}). Groups must cover every speech item exactly once, "
+                "in order, with no gaps."
             )
         marker_indices = [i for i in range(start, end + 1) if segments_marked[i].get("is_marker")]
         if marker_indices:
             raise ValueError(
-                f"Aligned mode: group {g} spans marker index/indices {marker_indices} - a "
-                "sentence group must never cross a [[DEMONSTRATION]] marker."
+                f"Group {g} spans marker index/indices {marker_indices} - a sentence group must "
+                "never cross a [[DEMONSTRATION]] marker."
             )
         cursor = skip_markers(end + 1)
 
     if cursor != n:
         raise ValueError(
-            f"Aligned mode: groups covered indices up to {cursor - 1}, but speech items continue "
-            f"to index {n - 1}. Some speech was dropped from the translation."
+            f"Groups covered indices up to {cursor - 1}, but speech items continue to index "
+            f"{n - 1}. Some speech was dropped from the translation."
         )
 
     return groups
@@ -156,12 +156,12 @@ def _validate_and_build_groups(segments_marked: list, raw_groups: list) -> list:
 
 def _write_debug_dump(payload_items: list, attempt_log: list) -> str:
     """
-    Written only when aligned mode exhausts every retry, so the exact
-    request items and every attempt's raw response can be inspected without
-    needing to re-run (and re-pay for) Whisper + GPT to reproduce it.
+    Written only when every retry is exhausted, so the exact request items
+    and every attempt's raw response can be inspected without needing to
+    re-run (and re-pay for) Whisper + GPT to reproduce it.
     """
     OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
-    debug_path = OUTPUT_FOLDER / "aligned_debug.json"
+    debug_path = OUTPUT_FOLDER / "translate_debug.json"
     debug_path.write_text(
         json.dumps({"items": payload_items, "attempts": attempt_log}, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -174,9 +174,9 @@ def _split_into_spans(segments_marked: list) -> list:
     Splits segments_marked into maximal contiguous runs of non-marker
     segments: [(global_start_index, span_segments), ...]. Markers are the
     natural boundaries between spans, so a span itself never contains one -
-    GPT is never asked to reason about markers at all for aligned mode,
-    eliminating "a group illegally spans a marker" as a possible mistake
-    rather than relying on a prompt rule to prevent it.
+    GPT is never asked to reason about markers at all, eliminating "a group
+    illegally spans a marker" as a possible mistake rather than relying on
+    a prompt rule to prevent it.
     """
     spans = []
     current, current_start = [], None
@@ -210,14 +210,14 @@ def _group_span(span_segments: list) -> tuple:
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     data = groups = last_error = None
     attempt_log = []
-    for attempt in range(1, _ALIGNED_MAX_ATTEMPTS + 1):
-        temperature = _ALIGNED_RETRY_TEMPERATURES[min(attempt - 1, len(_ALIGNED_RETRY_TEMPERATURES) - 1)]
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        temperature = _RETRY_TEMPERATURES[min(attempt - 1, len(_RETRY_TEMPERATURES) - 1)]
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             response_format={"type": "json_object"},
             temperature=temperature,
             messages=[
-                {"role": "system", "content": ALIGNED_SYSTEM_PROMPT},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
         )
@@ -234,14 +234,14 @@ def _group_span(span_segments: list) -> tuple:
             last_error = e
             attempt_record["error"] = str(e)
             log.warning(
-                f"Aligned-mode span grouping attempt {attempt}/{_ALIGNED_MAX_ATTEMPTS} "
+                f"Span grouping attempt {attempt}/{_MAX_ATTEMPTS} "
                 f"(temperature {temperature}) failed validation: {e}"
             )
     else:
         debug_path = _write_debug_dump(payload_items, attempt_log)
         raise ValueError(
-            f"Aligned mode: GPT's segment grouping failed validation {_ALIGNED_MAX_ATTEMPTS} times "
-            f"in a row for one span. Last error: {last_error}\n"
+            f"GPT's segment grouping failed validation {_MAX_ATTEMPTS} times in a row for one "
+            f"span. Last error: {last_error}\n"
             f"Full request items and every attempt's raw response were written to {debug_path} "
             "for troubleshooting, so this doesn't need to be reproduced by re-running Whisper."
         )
@@ -249,7 +249,7 @@ def _group_span(span_segments: list) -> tuple:
     return groups, usage_total
 
 
-def translate_segments_aligned(segments_marked: list) -> dict:
+def translate(segments_marked: list) -> dict:
     """
     segments_marked: [{"start", "end", "text", ["is_marker"]}, ...]
     Returns {"sentence_pairs": [{"turkish", "english", "start", "end"}],

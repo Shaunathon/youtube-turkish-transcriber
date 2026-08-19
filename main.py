@@ -15,12 +15,13 @@ import logging
 import sys
 from datetime import datetime, timezone
 
+from assets import write_shared_assets
 from config import DEMONSTRATION_GAP_SECONDS, OUTPUT_FOLDER, SERVE_PORT, TOKEN_USAGE_LOG
 from demonstration import insert_demonstration_markers
-from html_report import build_html_report, update_manifest, write_shared_assets
+from report_builder import build_html_report, update_manifest
 from serve import serve_and_open
 from transcriber import transcribe
-from translator import translate_segments_aligned
+from translator import translate
 from youtube_source import (
     cleanup,
     download_audio,
@@ -111,7 +112,7 @@ def process_video(url: str) -> list:
             marked = segments
 
         log.info(f"Translating {label} with GPT...")
-        result = translate_segments_aligned(marked)
+        result = translate(marked)
 
         usage = result.pop("usage", None)
         if usage:
