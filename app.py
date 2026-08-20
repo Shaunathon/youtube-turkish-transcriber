@@ -20,6 +20,12 @@ from report_builder import build_home_page, manifest_entries, update_manifest
 
 log = logging.getLogger("youtube-transcriber")
 
+# The Home page polls /api/jobs every 1.5s to show live status, and
+# Flask's dev server logs every request at INFO by default - left alone
+# that floods the terminal with routine polling noise. Errors (5xx) still
+# come through at their own level, so real problems aren't hidden.
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
 app = Flask(__name__)
 job_queue = JobQueue()
 
