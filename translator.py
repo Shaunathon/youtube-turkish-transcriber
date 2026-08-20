@@ -31,6 +31,17 @@ _MAX_ATTEMPTS = 3
 # completions rather than exploring genuinely different groupings.
 _RETRY_TEMPERATURES = [0.3, 0.6, 0.9]
 
+# A [[DEMONSTRATION]] marker naturally caps how many segments land in one
+# grouping call, but a video with continuous talking and no long pauses can
+# produce a single marker-free span covering the whole transcript. Observed
+# in practice on an 83-segment span: GPT loses track near the end and
+# either drops items or fabricates dozens of extra ones past the real
+# range (indices up to 110 when only 83 existed) - retrying at a higher
+# temperature didn't fix it, and made the fabrication worse. Capping span
+# size directly addresses the actual cause (too much to track in one
+# structured response) rather than hoping retries paper over it.
+_MAX_SPAN_SIZE = 25
+
 _MUSIC_TERMINOLOGY_GUIDANCE = """
 Domain context: these transcripts are Turkish clarinet instruction, often covering Turkish \
 makam (modal) music theory and ornamentation technique. When a Turkish word or phrase has more \
@@ -171,26 +182,35 @@ def _write_debug_dump(payload_items: list, attempt_log: list) -> str:
 
 def _split_into_spans(segments_marked: list) -> list:
     """
-    Splits segments_marked into maximal contiguous runs of non-marker
-    segments: [(global_start_index, span_segments), ...]. Markers are the
-    natural boundaries between spans, so a span itself never contains one -
+    Splits segments_marked into [(global_start_index, span_segments), ...].
+    Markers are the first, natural boundary: a span never contains one, so
     GPT is never asked to reason about markers at all, eliminating "a group
     illegally spans a marker" as a possible mistake rather than relying on
-    a prompt rule to prevent it.
+    a prompt rule to prevent it. Any resulting span longer than
+    _MAX_SPAN_SIZE is then further cut into consecutive same-size chunks -
+    unlike marker boundaries, this split doesn't need a "reason" the model
+    has to respect; consecutive segments translated via separate calls
+    still read naturally in sequence, just as more (smaller, more
+    reliably-tracked) requests instead of one large one.
     """
-    spans = []
+    raw_spans = []
     current, current_start = [], None
     for i, s in enumerate(segments_marked):
         if s.get("is_marker"):
             if current:
-                spans.append((current_start, current))
+                raw_spans.append((current_start, current))
                 current, current_start = [], None
         else:
             if not current:
                 current_start = i
             current.append(s)
     if current:
-        spans.append((current_start, current))
+        raw_spans.append((current_start, current))
+
+    spans = []
+    for start, segs in raw_spans:
+        for offset in range(0, len(segs), _MAX_SPAN_SIZE):
+            spans.append((start + offset, segs[offset:offset + _MAX_SPAN_SIZE]))
     return spans
 
 
