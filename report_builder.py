@@ -189,6 +189,45 @@ def build_html_report(
     return out_path
 
 
+def build_login_page(error: Optional[str] = None) -> str:
+    """
+    The shared-password gate (app.py's `/login`), shown only when
+    APP_PASSWORD is configured.
+
+    Deliberately renders without the sidebar: it lists every transcript's
+    title, and those shouldn't be readable by someone who hasn't gotten
+    past this page yet.
+    """
+    error_html = f'\n          <div class="login-error">{_esc(error)}</div>' if error else ""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Turkish video transcripts</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="page">
+  <div class="content">
+    <div class="ornament-rule"></div>
+    <div class="login-wrap">
+      <header>
+        <h1>Turkish video transcripts</h1>
+        <div class="meta">Enter the shared password to continue</div>
+      </header>
+      <form class="login-form" method="post">
+        <input type="password" name="password" placeholder="Password" autofocus required>
+        <button type="submit">Sign in</button>{error_html}
+      </form>
+    </div>
+  </div>
+</div>
+</body>
+</html>
+"""
+
+
 def build_home_page() -> str:
     """
     The web app's landing page (app.py's `GET /`): paste a URL, watch it

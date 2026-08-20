@@ -270,6 +270,42 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
 .job-error { margin-top: 8px; font-family: 'Work Sans', -apple-system, sans-serif; font-size: 0.88rem; color: #a83a3a; }
 .empty-jobs { font-family: 'Work Sans', -apple-system, sans-serif; color: var(--muted); font-size: 0.9rem; }
 
+/* Login page (deployments with APP_PASSWORD set). Narrower than .wrap and
+   sidebar-less - it's a single field, and there's no navigation to offer
+   someone who isn't signed in yet. */
+.login-wrap { max-width: 400px; margin: 0 auto; padding-top: 60px; }
+.login-form { display: flex; flex-direction: column; gap: 12px; margin-top: 28px; }
+.login-form input[type="password"] {
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 1rem;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper-deep);
+  color: var(--ink);
+}
+.login-form input[type="password"]:focus { outline: 2px solid var(--turquoise); outline-offset: 1px; }
+.login-form button {
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 12px 22px;
+  border: none;
+  border-radius: 6px;
+  background: var(--turquoise);
+  color: var(--paper);
+  cursor: pointer;
+}
+.login-form button:hover { background: #23615c; }
+.login-error {
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 0.88rem;
+  color: #a83a3a;
+  background: #f5d8d8;
+  padding: 10px 14px;
+  border-radius: 5px;
+}
+
 @media (max-width: 720px) {
   .page { flex-direction: column; }
   .sidebar { width: 100%; min-height: auto; position: static; border-right: none; border-bottom: 1px solid var(--line); }

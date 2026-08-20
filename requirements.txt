@@ -1,6 +1,7 @@
 openai
 python-dotenv
 flask
+gunicorn
 yt-dlp
 youtube-transcript-api
 bgutil-ytdlp-pot-provider

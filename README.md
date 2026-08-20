@@ -126,6 +126,94 @@ This only applies when Whisper transcription is needed. Videos with an existing 
 - **Audio-only downloads aren't always available**: if YouTube blocks audio-only streams outright for a given video/session, this tool falls back to the smallest available combined video+audio stream (≤360p) instead of failing - fine for Whisper (it only needs the audio track), just a somewhat larger/slower temporary download than pure audio would be.
 - **`YT_DLP_COOKIES_BROWSER`**: which browser's YouTube session cookies authorize audio downloads (default `chrome`). Set to empty to disable and rely solely on the PO-token plugin instead - only do this if cookies aren't working for you, since cookies have proven the more reliable path.
 
+## Hosting it for other people
+
+By default this app binds to `127.0.0.1` and has no authentication - it's private to your machine. To let friends use it at a URL, without each of them installing Python and bringing their own OpenAI key, deploy it to [Fly.io](https://fly.io). Everything below runs against **your** OpenAI key, so read the cost section first.
+
+### Before you start
+
+- **Set a spend limit on your OpenAI account.** This is the important one. `APP_PASSWORD` keeps strangers out, but it does nothing about a friend who queues up fifteen hour-long lessons. There is no cap in the app itself - go to [platform.openai.com/settings/organization/limits](https://platform.openai.com/settings/organization/limits) and set a monthly budget so a surprise bill isn't possible. Ballpark: roughly $0.20 per 30 minutes of video, and videos that already have manual Turkish captions cost only a few cents since they skip Whisper entirely.
+- **Install flyctl** and sign in (this creates the account and takes payment details, so it's yours to do, not something to automate):
+
+```bash
+brew install flyctl
+```
+
+### 1. Export your YouTube cookies
+
+A server has no browser profile, so `--cookies-from-browser` can't work there. Export a `cookies.txt` from the browser where you're signed in to YouTube - the "Get cookies.txt LOCALLY" extension for Chrome/Firefox is the usual way - saving it **outside** the repo so it can't be committed:
+
+```bash
+ls -la ~/Downloads/cookies.txt
+```
+
+Treat this file like a password: it's a live YouTube session, and anyone holding it can act as your Google account. `.gitignore` and `.dockerignore` both already exclude `cookies.txt`, but keeping it out of the project folder entirely is the safer habit.
+
+### 2. Create the app
+
+Edit `fly.toml` and change `app = "CHANGE-ME"` to a name of your own, then:
+
+```bash
+fly launch --no-deploy --copy-config --name your-app-name
+```
+
+Create the volume that keeps transcripts across deploys (without it, every report vanishes each time the machine is replaced):
+
+```bash
+fly volumes create transcripts_data --size 3 --region iad
+```
+
+### 3. Set the secrets
+
+These never go in the repo or the image - Fly injects them at runtime. Run each line separately, substituting your own values:
+
+```bash
+fly secrets set OPENAI_API_KEY="sk-..."
+```
+
+```bash
+fly secrets set APP_PASSWORD="the-password-you-give-friends"
+```
+
+```bash
+fly secrets set SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+```
+
+```bash
+fly secrets set YT_COOKIES_B64="$(base64 < ~/Downloads/cookies.txt)"
+```
+
+`SECRET_KEY` signs the login cookie - a stable value keeps everyone logged in across deploys, and omitting it logs everyone out on every restart. `YT_COOKIES_B64` is base64-encoded because Fly secrets are single-line strings; the app decodes it to a `0600` file at startup.
+
+### 4. Deploy
+
+```bash
+fly deploy
+```
+
+Then open it and sign in with the password you set:
+
+```bash
+fly open
+```
+
+Give friends the URL and the password. That's the whole handoff - nothing to install on their end.
+
+### Keeping it running
+
+- **Cookies expire**, typically every few weeks. The symptom is videos failing at the download step with a yt-dlp bot-detection error, visible in the job's log on the Home page. The fix is re-exporting and re-running the `YT_COOKIES_B64` line above. Videos with existing manual Turkish captions keep working regardless, since they never download audio.
+- **Watch the logs** with `fly logs`.
+- **One machine, on purpose.** The job queue lives in the app's memory with a single worker thread, so `fly.toml` pins the deployment to exactly one always-on machine. Scaling to two would create two independent queues backed by two separate volumes. For the same reason, a restart clears the *queue history* shown on the Home page - finished reports are on the volume and survive fine.
+- **Jobs run one at a time.** Two friends submitting at once means the second waits, which is deliberate: it keeps OpenAI rate limits and ffmpeg CPU predictable.
+
+### Running it locally still works exactly as before
+
+None of the above changes local use. With `APP_PASSWORD` unset there's no login step, and `BIND_HOST` stays `127.0.0.1`:
+
+```bash
+python3 app.py
+```
+
 ## What's not included (yet)
 
 No `publish.py` / GitHub Pages workflow like `turkish-voice-transcriber` has - these reports currently live locally only. If you want the same "choose what to publish" flow for these, it's a small addition and worth asking for once you've used the tool a bit.

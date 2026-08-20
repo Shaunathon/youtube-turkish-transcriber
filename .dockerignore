@@ -1,0 +1,23 @@
+# Keep secrets and local state out of the image. The image is a build
+# artifact that gets pushed to a registry - anything copied in is
+# recoverable by anyone who can pull it, so .env (your OpenAI key) and any
+# exported cookies.txt (a live YouTube session) must never land here.
+# Both are supplied at runtime via `fly secrets set` instead.
+.env
+.env.*
+!.env.example
+cookies.txt
+*cookies*.txt
+
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+.git/
+.gitignore
+.DS_Store
+
+# Generated locally; the deployment keeps its own on a persistent volume.
+transcripts/
+translate_debug.json

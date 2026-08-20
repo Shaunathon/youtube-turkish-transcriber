@@ -16,7 +16,13 @@ from typing import List, Optional, Tuple
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled
 
-from config import FFMPEG_PATH, MAX_AUDIO_MB, SOURCE_LANGUAGE, YT_DLP_COOKIES_BROWSER
+from config import (
+    FFMPEG_PATH,
+    MAX_AUDIO_MB,
+    SOURCE_LANGUAGE,
+    YT_DLP_COOKIES_BROWSER,
+    YT_DLP_COOKIES_FILE,
+)
 
 log = logging.getLogger("youtube-transcriber")
 
@@ -42,17 +48,50 @@ class VideoMeta:
         self.duration_seconds = duration_seconds
 
 
+def _auth_attempts() -> List[List[str]]:
+    """
+    yt-dlp authentication arguments to try, best-first: an explicit
+    cookies.txt, then the local browser's session, then unauthenticated.
+
+    Ordered this way because only the first works on a server - there's no
+    browser profile in a container to borrow cookies from - while the
+    second stays the convenient default on your own machine, where
+    exporting a file by hand would be busywork.
+    """
+    attempts = []
+    if YT_DLP_COOKIES_FILE:
+        attempts.append(["--cookies", YT_DLP_COOKIES_FILE])
+    if YT_DLP_COOKIES_BROWSER:
+        attempts.append(["--cookies-from-browser", YT_DLP_COOKIES_BROWSER])
+    attempts.append([])
+    return attempts
+
+
 def get_video_metadata(video_id: str) -> VideoMeta:
-    """Reads title/duration via yt-dlp without downloading anything."""
+    """
+    Reads title/duration via yt-dlp without downloading anything.
+
+    Runs through the same authentication ladder as download_audio: reading
+    metadata is also subject to YouTube's bot-detection, so on a server an
+    unauthenticated attempt can fail here before a download is ever tried.
+    """
     url = f"https://www.youtube.com/watch?v={video_id}"
-    proc = subprocess.run(
-        ["yt-dlp", "--dump-json", "--no-warnings", "--skip-download", url],
-        capture_output=True, text=True,
+
+    errors = []
+    for i, auth_args in enumerate(_auth_attempts(), 1):
+        proc = subprocess.run(
+            ["yt-dlp", *auth_args, "--dump-json", "--no-warnings", "--skip-download", url],
+            capture_output=True, text=True,
+        )
+        if proc.returncode == 0:
+            info = json.loads(proc.stdout)
+            return VideoMeta(video_id, info.get("title") or video_id, float(info.get("duration") or 0))
+        errors.append(f"attempt {i}: {proc.stderr.strip()}")
+
+    raise RuntimeError(
+        f"yt-dlp couldn't read video info for {video_id} after {len(errors)} attempts:\n"
+        + "\n---\n".join(errors)
     )
-    if proc.returncode != 0:
-        raise RuntimeError(f"yt-dlp couldn't read video info for {video_id}:\n{proc.stderr.strip()}")
-    info = json.loads(proc.stdout)
-    return VideoMeta(video_id, info.get("title") or video_id, float(info.get("duration") or 0))
 
 
 def fetch_existing_transcript(video_id: str) -> Optional[List[dict]]:
@@ -102,18 +141,15 @@ def download_audio(video_id: str, dest_dir: Path) -> Path:
     the audio track). No re-encoding, no ffmpeg involved in this step.
 
     YouTube's bot-detection has made a plain, unauthenticated download
-    unreliable, so this borrows the configured browser's YouTube session
-    cookies first (the fix that's actually worked reliably in testing),
-    falling back to an unauthenticated attempt (relying on the bgutil
-    PO-token plugin, if installed) in case cookies aren't available.
+    unreliable, so this works down the authentication ladder in
+    _auth_attempts() - an exported cookies.txt, then the configured
+    browser's session, then an unauthenticated attempt (relying on the
+    bgutil PO-token plugin, if installed) as a last resort.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     url = f"https://www.youtube.com/watch?v={video_id}"
 
-    attempts = []
-    if YT_DLP_COOKIES_BROWSER:
-        attempts.append(["-f", _FORMAT_SELECTOR, "--cookies-from-browser", YT_DLP_COOKIES_BROWSER])
-    attempts.append(["-f", _FORMAT_SELECTOR])
+    attempts = [["-f", _FORMAT_SELECTOR, *auth] for auth in _auth_attempts()]
 
     errors = []
     for i, extra_args in enumerate(attempts, 1):

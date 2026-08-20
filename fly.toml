@@ -1,0 +1,44 @@
+# Fly.io deployment config. Rename `app` below to whatever you called your
+# Fly app, then see the README's "Hosting it for other people" section for
+# the deploy steps and the secrets you need to set.
+
+app = "CHANGE-ME"
+primary_region = "iad"
+
+[build]
+
+[env]
+  BIND_HOST = "0.0.0.0"
+  PORT = "8080"
+  # Transcripts live on the mounted volume below, so they survive deploys
+  # and restarts. Pointing this anywhere else means losing every report
+  # the next time the machine is replaced.
+  OUTPUT_FOLDER = "/data/transcripts"
+  # Marks the login session cookie Secure - safe here because force_https
+  # below means this app is only ever reachable over HTTPS.
+  COOKIE_SECURE = "1"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # A job runs for minutes in a background thread and the queue is held in
+  # memory, so the machine must not be suspended out from under it - that
+  # would silently kill whatever is transcribing. This app is cheap enough
+  # to simply leave running.
+  auto_stop_machines = false
+  auto_start_machines = true
+  # Exactly one machine, for the same reason the container runs exactly one
+  # gunicorn worker: a second machine would have its own separate queue and
+  # its own separate copy of the volume.
+  min_machines_running = 1
+
+[mounts]
+  source = "transcripts_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # Headroom for ffmpeg remuxing and holding a ~24MB audio chunk in memory
+  # during the Whisper upload. 512MB works for short videos but gets tight
+  # on long ones.
+  memory = "1gb"

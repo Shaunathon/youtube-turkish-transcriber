@@ -4,3 +4,8 @@ __pycache__/
 *.pyc
 transcripts/
 .tmp_audio/
+
+# An exported YouTube cookies.txt is a live session for your Google
+# account - never commit one, even temporarily.
+cookies.txt
+*cookies*.txt
