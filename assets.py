@@ -51,6 +51,19 @@ body {
   color: var(--muted);
   margin-bottom: 16px;
 }
+.sidebar-home-link {
+  display: block;
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  padding: 7px 10px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+  background: var(--turquoise-soft);
+}
+.sidebar-home-link:hover { background: var(--turquoise); color: var(--paper); }
 .sidebar-list { display: flex; flex-direction: column; gap: 2px; }
 .sidebar-list a {
   font-family: 'Work Sans', -apple-system, sans-serif;
@@ -194,6 +207,69 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
 }
 .page-footer .meta { text-transform: none; letter-spacing: normal; }
 
+/* Home page: the URL-submission form and the live job queue below it. */
+.home-form { display: flex; gap: 10px; margin: 24px 0 40px; }
+.home-form input[type="url"] {
+  flex: 1;
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 1rem;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper-deep);
+  color: var(--ink);
+}
+.home-form input[type="url"]:focus { outline: 2px solid var(--turquoise); outline-offset: 1px; }
+.home-form button {
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 12px 22px;
+  border: none;
+  border-radius: 6px;
+  background: var(--turquoise);
+  color: var(--paper);
+  cursor: pointer;
+}
+.home-form button:hover { background: #23615c; }
+.home-form button:disabled { background: var(--muted); cursor: not-allowed; }
+
+.job-list { display: flex; flex-direction: column; gap: 14px; }
+.job { border: 1px solid var(--line); border-radius: 6px; padding: 16px 20px; background: var(--paper-deep); }
+.job-url { font-family: 'Work Sans', -apple-system, sans-serif; font-size: 0.88rem; color: var(--ink-soft); word-break: break-all; }
+.job-status {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.job-status.queued { background: var(--paper); color: var(--muted); border: 1px solid var(--line); }
+.job-status.processing { background: var(--turquoise-soft); color: var(--turquoise); }
+.job-status.done { background: var(--coral-soft); color: var(--coral); }
+.job-status.error { background: #f5d8d8; color: #a83a3a; }
+.job-log {
+  margin-top: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--ink);
+  color: #d9e4f5;
+  font-family: 'Work Sans', -apple-system, sans-serif;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  padding: 12px 14px;
+  border-radius: 5px;
+  white-space: pre-wrap;
+}
+.job-links a { font-family: 'Work Sans', -apple-system, sans-serif; font-size: 0.85rem; color: var(--coral); text-decoration: none; }
+.job-links a:hover { text-decoration: underline; }
+.job-error { margin-top: 8px; font-family: 'Work Sans', -apple-system, sans-serif; font-size: 0.88rem; color: #a83a3a; }
+.empty-jobs { font-family: 'Work Sans', -apple-system, sans-serif; color: var(--muted); font-size: 0.9rem; }
+
 @media (max-width: 720px) {
   .page { flex-direction: column; }
   .sidebar { width: 100%; min-height: auto; position: static; border-right: none; border-bottom: 1px solid var(--line); }
@@ -201,16 +277,21 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
 }
 @media (max-width: 640px) {
   .columns { grid-template-columns: 1fr; }
+  .home-form { flex-direction: column; }
 }
 """
 
-SIDEBAR_JS = """// Renders the transcript list into the sidebar from manifest.js,
-// which main.py regenerates every time a new video is processed.
-(function () {
+SIDEBAR_JS = """// Renders the transcript list into the sidebar from manifest.js
+// (regenerated every time a new video finishes processing) by default, or
+// from an explicit entries array if one is passed in - the web app's Home
+// page uses that to refresh the sidebar live from /api/manifest after a
+// job completes, without a full page reload. Exposed on window so it can
+// be re-invoked either way.
+function renderSidebar(entries) {
   var container = document.getElementById('sidebar-list');
   if (!container) return;
 
-  var manifest = window.TRANSCRIPT_MANIFEST || [];
+  var manifest = entries || window.TRANSCRIPT_MANIFEST || [];
   var currentFile = decodeURIComponent(window.location.pathname.split('/').pop());
   if (currentFile === '' || currentFile === 'index.html') {
     currentFile = manifest.length ? manifest[0].file : currentFile;
@@ -231,7 +312,9 @@ SIDEBAR_JS = """// Renders the transcript list into the sidebar from manifest.js
     }
     container.appendChild(link);
   });
-})();
+}
+window.renderSidebar = renderSidebar;
+renderSidebar();
 """
 
 REPORT_JS = """// Turkish/English hover-linking, click-to-seek on the embedded YouTube
@@ -408,9 +491,95 @@ window.onYouTubeIframeAPIReady = function () {
 })();
 """
 
+HOME_JS = """// Home page only: submit a YouTube URL to the queue, then poll for
+// live progress. Not loaded on report pages - they have nothing to submit.
+(function () {
+  var form = document.getElementById('home-form');
+  var input = document.getElementById('video-url');
+  var button = document.getElementById('submit-btn');
+  var jobList = document.getElementById('job-list');
+  if (!form) return;
+
+  function escapeHtml(s) {
+    var div = document.createElement('div');
+    div.textContent = s == null ? '' : s;
+    return div.innerHTML;
+  }
+
+  var STATUS_LABELS = { queued: 'Queued', processing: 'Processing', done: 'Done', error: 'Error' };
+
+  function renderJobs(jobs) {
+    if (!jobs.length) {
+      jobList.innerHTML = '<p class="empty-jobs">No videos submitted yet.</p>';
+      return;
+    }
+    jobList.innerHTML = jobs.map(function (job) {
+      var html = '<div class="job">';
+      html += '<span class="job-url">' + escapeHtml(job.url) + '</span>';
+      html += '<span class="job-status ' + job.status + '">' + (STATUS_LABELS[job.status] || job.status) + '</span>';
+      if (job.status === 'processing' && job.log_lines.length) {
+        html += '<div class="job-log">' + escapeHtml(job.log_lines.join('\\n')) + '</div>';
+      }
+      if (job.status === 'error' && job.error) {
+        html += '<div class="job-error">' + escapeHtml(job.error) + '</div>';
+      }
+      if (job.status === 'done' && job.result_files.length) {
+        html += '<div class="job-links">' + job.result_files.map(function (f) {
+          return '<a href="' + encodeURI(f) + '">View report: ' + escapeHtml(f) + ' &rarr;</a>';
+        }).join('<br>') + '</div>';
+      }
+      html += '</div>';
+      return html;
+    }).join('');
+  }
+
+  var lastDoneCount = -1;
+  function refreshJobs() {
+    fetch('/api/jobs')
+      .then(function (r) { return r.json(); })
+      .then(function (jobs) {
+        renderJobs(jobs);
+        var doneCount = jobs.filter(function (j) { return j.status === 'done'; }).length;
+        if (lastDoneCount !== -1 && doneCount !== lastDoneCount) {
+          // A job finished since the last check - the sidebar (built once
+          // at page load from manifest.js) is now stale. Refresh it in
+          // place from the live manifest rather than reloading the page.
+          fetch('/api/manifest')
+            .then(function (r) { return r.json(); })
+            .then(function (entries) { if (window.renderSidebar) window.renderSidebar(entries); });
+        }
+        lastDoneCount = doneCount;
+      })
+      .catch(function () {});
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var url = input.value.trim();
+    if (!url) return;
+    button.disabled = true;
+    fetch('/api/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function () {
+        input.value = '';
+        refreshJobs();
+      })
+      .finally(function () { button.disabled = false; });
+  });
+
+  refreshJobs();
+  setInterval(refreshJobs, 1500);
+})();
+"""
+
 
 def write_shared_assets(output_folder: Path) -> None:
     output_folder.mkdir(parents=True, exist_ok=True)
     (output_folder / "styles.css").write_text(CSS, encoding="utf-8")
     (output_folder / "sidebar.js").write_text(SIDEBAR_JS, encoding="utf-8")
     (output_folder / "report.js").write_text(REPORT_JS, encoding="utf-8")
+    (output_folder / "home.js").write_text(HOME_JS, encoding="utf-8")

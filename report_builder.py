@@ -53,7 +53,11 @@ def _sentence_lines(pairs: list, lang_key: str) -> str:
     return "\n          ".join(lines)
 
 
-def update_manifest(output_folder: Path) -> None:
+def manifest_entries(output_folder: Path) -> list:
+    """[{"file", "title"}, ...] for every report in output_folder, newest
+    first. Recomputed fresh from disk each call (a cheap glob), so unlike
+    the static manifest.js file this is always current - used by app.py's
+    /api/manifest for the web UI to refresh its sidebar without a reload."""
     entries = []
     for report_path in output_folder.glob("*.html"):
         if report_path.stem == "index":
@@ -62,10 +66,21 @@ def update_manifest(output_folder: Path) -> None:
     entries.sort(key=lambda e: (e["mtime"], e["file"]), reverse=True)
     for e in entries:
         del e["mtime"]
+    return entries
 
-    manifest_js = "window.TRANSCRIPT_MANIFEST = " + json.dumps(entries, ensure_ascii=False, indent=2) + ";\n"
+
+def update_manifest(output_folder: Path) -> None:
+    manifest_js = "window.TRANSCRIPT_MANIFEST = " + json.dumps(manifest_entries(output_folder), ensure_ascii=False, indent=2) + ";\n"
     output_folder.mkdir(parents=True, exist_ok=True)
     (output_folder / "manifest.js").write_text(manifest_js, encoding="utf-8")
+
+
+def _sidebar_html() -> str:
+    return """  <nav class="sidebar">
+    <div class="sidebar-title">Transcripts</div>
+    <a class="sidebar-home-link" href="/">Home</a>
+    <div class="sidebar-list" id="sidebar-list">Loading&hellip;</div>
+  </nav>"""
 
 
 def report_stem(video_title: str, part: Optional[int]) -> str:
@@ -137,10 +152,7 @@ def build_html_report(
 </head>
 <body>
 <div class="page">
-  <nav class="sidebar">
-    <div class="sidebar-title">Transcripts</div>
-    <div class="sidebar-list" id="sidebar-list">Loading&hellip;</div>
-  </nav>
+{_sidebar_html()}
   <div class="content">
     <div class="ornament-rule"></div>
     <div class="wrap">
@@ -175,3 +187,48 @@ def build_html_report(
     out_path = output_folder / f"{stem}.html"
     out_path.write_text(doc, encoding="utf-8")
     return out_path
+
+
+def build_home_page() -> str:
+    """
+    The web app's landing page (app.py's `GET /`): paste a URL, watch it
+    process. Returned as a string rather than written to disk - app.py
+    serves it directly, it's not a static report.
+    """
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home — Turkish video transcripts</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+{_sidebar_html()}
+  <div class="content">
+    <div class="ornament-rule"></div>
+    <div class="wrap">
+      <header>
+        <h1>Add a video</h1>
+        <div class="meta">Paste a YouTube link below to transcribe and translate it</div>
+      </header>
+
+      <form id="home-form" class="home-form">
+        <input type="url" id="video-url" placeholder="https://www.youtube.com/watch?v=..." required>
+        <button type="submit" id="submit-btn">Start</button>
+      </form>
+
+      <section>
+        <h2>Queue</h2>
+        <div id="job-list" class="job-list"><p class="empty-jobs">Loading&hellip;</p></div>
+      </section>
+    </div>
+  </div>
+</div>
+<script src="manifest.js"></script>
+<script src="sidebar.js" defer></script>
+<script src="home.js" defer></script>
+</body>
+</html>
+"""

@@ -66,14 +66,25 @@ Add your `OPENAI_API_KEY` (from https://platform.openai.com/api-keys) - the same
 
 ```bash
 source venv/bin/activate
+python3 app.py
+```
+
+This starts a persistent local web app and opens it in your browser. From the **Home** page, paste a YouTube link and click **Start** - it's added to a queue (processed one at a time, so it doesn't compete with itself for OpenAI rate limits or ffmpeg CPU) and you can watch its status (queued/processing/done) and live log right there on the page. Every finished video shows up in the sidebar immediately, alongside every report from a previous run - click any of them to reopen it. Leave the terminal running; press `Ctrl+C` when you're done.
+
+Accepts a full URL (`youtube.com/watch?v=...`, `youtu.be/...`, `/shorts/...`, `/embed/...`) or a bare 11-character video ID, same as the CLI below.
+
+### Command-line alternative
+
+For scripting several videos back to back (e.g. a shell loop), or if you just prefer a terminal, `main.py` still works exactly as before:
+
+```bash
+source venv/bin/activate
 python3 main.py "https://www.youtube.com/watch?v=XXXXXXXXXXX"
 ```
 
-Accepts a full URL (`youtube.com/watch?v=...`, `youtu.be/...`, `/shorts/...`, `/embed/...`) or a bare 11-character video ID.
+When it finishes, it automatically starts a local server and opens that one report in your default browser - stay in that terminal and press `Ctrl+C` when you're done viewing to stop the server (the process won't exit on its own until you do). Pass `--no-serve` to skip this and just write the file. Note that the sidebar's **Home** link only works when the page is served by `app.py` - opened via `main.py`'s own server (or a plain `python3 -m http.server`) it 404s, since there's no queue behind it there.
 
-When it finishes, it automatically starts a local server and opens the report in your default browser - stay in that terminal and press `Ctrl+C` when you're done viewing to stop the server (the process won't exit on its own until you do). Pass `--no-serve` to skip this and just write the file, e.g. if you're scripting several videos back to back.
-
-### Why it needs a server at all
+### Why a server at all
 
 The video embed needs `enablejsapi=1` to support click-to-seek, and YouTube's embedded player rejects that when a page is opened directly from disk (`file://...`) - you'd see a player error (e.g. "Error 153") instead of the video. That's what the auto-served browser tab avoids. If you used `--no-serve` and want to view a report later, serve it manually:
 
@@ -91,7 +102,7 @@ Each report (`transcripts/<video-title>.html`) has:
 - **`[[DEMONSTRATION]]` markers** wherever there's a gap of `DEMONSTRATION_GAP_SECONDS` (default 7s) or more between spoken segments - including before the first word or after the last, so a long instrumental intro or closing demo gets flagged too. Only added when transcribing via Whisper; skipped for an existing manual transcript, which is left exactly as the uploader wrote it (including any `[Müzik]`/`[Alkış]`-style tags they already added for non-speech passages).
 - **Turkish and English side by side, every sentence clickable to seek the video there.** Hover a sentence on either side to underline its counterpart. Each sentence is its own line rather than flowing prose, so the page can keep each pair's start within about a line and a half of its counterpart - Turkish tends to run longer, so this pads the English side (only ever the English side) with blank space wherever it's lagging behind, recalculated on window resize. The Turkish sentence matching the video's current playback position is also highlighted independently of hover, and the page autoscrolls to keep it in view - in either direction, so scrubbing backward scrolls back up too. An "Autoscroll: active" button next to the video turns off automatically the moment you scroll manually (it becomes clickable and reads "Autoscroll: activate"); click it to resume following along.
 - **A footer showing token usage** for that report's GPT translation call(s) - total, prompt, and completion tokens.
-- **A sidebar** listing every transcript processed so far, most recent first.
+- **A sidebar** listing every transcript processed so far, most recent first, plus a permanent **Home** link back to the queue page (when running via `app.py`).
 
 ### Long videos: split into parts, never stitched
 
