@@ -79,6 +79,14 @@ Even a very short or seemingly trivial item - a single word like "Şimdi." ("Now
 feeling too minor to be its own sentence. Merge it into an adjacent group if that reads more \
 naturally, but it must never be omitted from every group.
 
+The reverse also happens: a single item can itself contain more than one complete Turkish \
+sentence run together with no detectable pause between them. When that happens, that item still \
+gets exactly one group and one English entry - translate its full content as one English string, \
+even if that string itself reads as multiple English sentences internally. Never invent an \
+index beyond the range you were given to give a second sentence within one item its own entry, \
+and never split one item's translation across two groups - there is no timestamp available for \
+a boundary inside an item, only at its start, so a split there cannot be represented.
+
 Respond with ONLY valid JSON (no markdown fences, no commentary) matching exactly this shape:
 
 {
