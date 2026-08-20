@@ -88,6 +88,15 @@ def _gather_segment_groups(video_id: str, duration_seconds: float):
                 segs = transcribe(chunk_path)
             finally:
                 cleanup(chunk_path)
+            # transcribe() reports timestamps relative to the chunk file
+            # itself (starting near 0), but everything downstream - markers,
+            # click-to-seek timestamps - needs them relative to the full
+            # original video. Offset by this chunk's actual start time.
+            # (Part 1 has start=0, so this bug was invisible there - only
+            # part 2 onward was ever affected.)
+            for seg in segs:
+                seg["start"] += start
+                seg["end"] += start
             groups.append((segs, start, end, i, total_parts, "Whisper transcription", True))
         return groups
     finally:
