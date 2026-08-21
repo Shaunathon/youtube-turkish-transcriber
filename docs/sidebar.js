@@ -4,7 +4,32 @@
 // page uses that to refresh the sidebar live from /api/manifest after a
 // job completes, without a full page reload. Exposed on window so it can
 // be re-invoked either way.
+// The Home link is owned here rather than trusted to each report's baked-in
+// markup, because that markup is frozen at generation time: reports built
+// before the link existed have none, and ones built before it was made
+// relative point at "/" - which on a GitHub Pages project site lands on
+// user.github.io instead of user.github.io/<repo>/. Fixing it from this
+// shared file corrects every existing report the next time the page loads,
+// with no regeneration (and so no repeat API spend).
+function ensureHomeLink() {
+  var sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+
+  var link = sidebar.querySelector('.sidebar-home-link');
+  if (!link) {
+    link = document.createElement('a');
+    link.className = 'sidebar-home-link';
+    link.textContent = 'Home';
+    // insertBefore with a null reference appends, which is the right
+    // outcome if a page somehow has no list to sit above.
+    sidebar.insertBefore(link, document.getElementById('sidebar-list'));
+  }
+  link.setAttribute('href', './');
+}
+
 function renderSidebar(entries) {
+  ensureHomeLink();
+
   var container = document.getElementById('sidebar-list');
   if (!container) return;
 
