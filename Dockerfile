@@ -6,14 +6,32 @@ FROM python:3.12-slim
 # ffmpeg splits oversized audio into Whisper-sized chunks. Without it,
 # any video whose audio exceeds MAX_AUDIO_MB fails outright, so it's a
 # hard requirement rather than an optimization.
-#
-# Deliberately NOT installing Deno / the bgutil PO-token generator: this
-# deployment authorizes downloads with a cookies.txt instead, which is
-# the more reliable path. If your cookies lapse and you'd rather have the
-# token fallback than re-export them, that's the piece to add here.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip git \
     && rm -rf /var/lib/apt/lists/*
+
+# Deno is NOT optional, despite this deployment authorizing with cookies.
+# YouTube gates format resolution behind a JavaScript "n" challenge that
+# yt-dlp can only solve with a JS runtime available; without one it fails
+# hard - "n challenge solving failed" then "The page needs to be
+# reloaded" - for every video, cookies or not. Verified by running yt-dlp
+# with deno removed from PATH. Pinned to the version proven working
+# against current YouTube rather than floating, so a Deno release can't
+# silently change behavior here.
+ARG DENO_VERSION=v2.9.4
+RUN curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" -o /tmp/deno.zip \
+    && unzip -q /tmp/deno.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/deno \
+    && rm /tmp/deno.zip \
+    && deno --version
+
+# The bgutil PO-token generator, which yt-dlp runs on demand via Deno.
+# Best-effort rather than required: when it's missing yt-dlp only warns
+# and carries on (unlike the JS runtime above), but the local setup that
+# works has it, so match that instead of discovering the difference in
+# production. Cloned to $HOME, where the plugin looks by default.
+RUN git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
+    /root/bgutil-ytdlp-pot-provider
 
 WORKDIR /app
 

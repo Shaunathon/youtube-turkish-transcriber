@@ -141,13 +141,27 @@ brew install flyctl
 
 ### 1. Export your YouTube cookies
 
-A server has no browser profile, so `--cookies-from-browser` can't work there. Export a `cookies.txt` from the browser where you're signed in to YouTube - the "Get cookies.txt LOCALLY" extension for Chrome/Firefox is the usual way - saving it **outside** the repo so it can't be committed:
+A server has no browser profile, so `--cookies-from-browser` can't work there. You don't need a browser extension for this - `yt-dlp` can export the cookies itself, using the same Chrome session that already works locally. From the project folder with the venv active:
 
 ```bash
-ls -la ~/Downloads/cookies.txt
+yt-dlp --cookies-from-browser chrome --cookies ~/Downloads/cookies.txt --skip-download -q "https://www.youtube.com/watch?v=vxsauYc3yT0"
 ```
 
-Treat this file like a password: it's a live YouTube session, and anyone holding it can act as your Google account. `.gitignore` and `.dockerignore` both already exclude `cookies.txt`, but keeping it out of the project folder entirely is the safer habit.
+macOS may prompt for Keychain access to read Chrome's cookie store - approve it. The video URL is only there because yt-dlp needs something to act on; nothing is downloaded.
+
+That command dumps **every cookie in your browser**, not just YouTube's - typically a few thousand, covering every site you're signed into. Narrow it to just the domains yt-dlp needs, and make it readable only by you:
+
+```bash
+{ head -1 ~/Downloads/cookies.txt; grep -E '(^|\.)(youtube\.com|google\.com)\b' ~/Downloads/cookies.txt; } > ~/Downloads/cookies.filtered && mv ~/Downloads/cookies.filtered ~/Downloads/cookies.txt && chmod 600 ~/Downloads/cookies.txt
+```
+
+Check it worked - this counts lines without printing any cookie values:
+
+```bash
+grep -vc '^#' ~/Downloads/cookies.txt
+```
+
+A few hundred is expected. Treat this file like a password: it's a live YouTube session, and anyone holding it can act as your Google account. `.gitignore` and `.dockerignore` both exclude `cookies.txt`, but keeping it out of the project folder entirely is the safer habit.
 
 ### 2. Create the app
 
@@ -203,6 +217,7 @@ Give friends the URL and the password. That's the whole handoff - nothing to ins
 
 - **Cookies expire**, typically every few weeks. The symptom is videos failing at the download step with a yt-dlp bot-detection error, visible in the job's log on the Home page. The fix is re-exporting and re-running the `YT_COOKIES_B64` line above. Videos with existing manual Turkish captions keep working regardless, since they never download audio.
 - **Watch the logs** with `fly logs`.
+- **The image bundles Deno**, which isn't optional even though downloads authorize by cookie. YouTube gates format resolution behind a JavaScript "n" challenge that yt-dlp needs a JS runtime to solve; without one, every Whisper-bound video fails with "n challenge solving failed" regardless of how good your cookies are. Nothing for you to do - the Dockerfile installs it - but it's the first thing to check if downloads start failing after a base-image change.
 - **One machine, on purpose.** The job queue lives in the app's memory with a single worker thread, so `fly.toml` pins the deployment to exactly one always-on machine. Scaling to two would create two independent queues backed by two separate volumes. For the same reason, a restart clears the *queue history* shown on the Home page - finished reports are on the volume and survive fine.
 - **Jobs run one at a time.** Two friends submitting at once means the second waits, which is deliberate: it keeps OpenAI rate limits and ffmpeg CPU predictable.
 
