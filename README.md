@@ -82,7 +82,7 @@ source venv/bin/activate
 python3 main.py "https://www.youtube.com/watch?v=XXXXXXXXXXX"
 ```
 
-When it finishes, it automatically starts a local server and opens that one report in your default browser - stay in that terminal and press `Ctrl+C` when you're done viewing to stop the server (the process won't exit on its own until you do). Pass `--no-serve` to skip this and just write the file. Note that the sidebar's **Home** link only works when the page is served by `app.py` - opened via `main.py`'s own server (or a plain `python3 -m http.server`) it 404s, since there's no queue behind it there.
+When it finishes, it automatically starts a local server and opens that one report in your default browser - stay in that terminal and press `Ctrl+C` when you're done viewing to stop the server (the process won't exit on its own until you do). Pass `--no-serve` to skip this and just write the file. The sidebar's **Home** link points at the directory root (`./`), so it reaches the submission queue under `app.py`, the published index on GitHub Pages, and a bare directory listing under `main.py`'s own server or a plain `python3 -m http.server` - which has no queue behind it.
 
 ### Why a server at all
 
@@ -126,109 +126,39 @@ This only applies when Whisper transcription is needed. Videos with an existing 
 - **Audio-only downloads aren't always available**: if YouTube blocks audio-only streams outright for a given video/session, this tool falls back to the smallest available combined video+audio stream (≤360p) instead of failing - fine for Whisper (it only needs the audio track), just a somewhat larger/slower temporary download than pure audio would be.
 - **`YT_DLP_COOKIES_BROWSER`**: which browser's YouTube session cookies authorize audio downloads (default `chrome`). Set to empty to disable and rely solely on the PO-token plugin instead - only do this if cookies aren't working for you, since cookies have proven the more reliable path.
 
-## Hosting it for other people
+## Sharing it: publishing to GitHub Pages
 
-By default this app binds to `127.0.0.1` and has no authentication - it's private to your machine. To let friends use it at a URL, without each of them installing Python and bringing their own OpenAI key, deploy it to [Fly.io](https://fly.io). Everything below runs against **your** OpenAI key, so read the cost section first.
-
-### Before you start
-
-- **Set a spend limit on your OpenAI account.** This is the important one. `APP_PASSWORD` keeps strangers out, but it does nothing about a friend who queues up fifteen hour-long lessons. There is no cap in the app itself - go to [platform.openai.com/settings/organization/limits](https://platform.openai.com/settings/organization/limits) and set a monthly budget so a surprise bill isn't possible. Ballpark: roughly $0.20 per 30 minutes of video, and videos that already have manual Turkish captions cost only a few cents since they skip Whisper entirely.
-- **Install flyctl** and sign in (this creates the account and takes payment details, so it's yours to do, not something to automate):
+Finished reports are plain static HTML, so they publish to GitHub Pages with no server involved. Processing stays on your machine; only the results go up.
 
 ```bash
-brew install flyctl
+python3 publish.py
 ```
 
-### 1. Export your YouTube cookies
-
-A server has no browser profile, so `--cookies-from-browser` can't work there. You don't need a browser extension for this - `yt-dlp` can export the cookies itself, using the same Chrome session that already works locally. From the project folder with the venv active:
+That copies every report in `transcripts/` into `docs/`, along with the shared CSS/JS, a regenerated `manifest.js`, and an `index.html` listing them all. It deliberately does **not** push - publishing makes the transcripts publicly readable, so that's an explicit step:
 
 ```bash
-yt-dlp --cookies-from-browser chrome --cookies ~/Downloads/cookies.txt --skip-download -q "https://www.youtube.com/watch?v=vxsauYc3yT0"
+python3 publish.py --push
 ```
 
-macOS may prompt for Keychain access to read Chrome's cookie store - approve it. The video URL is only there because yt-dlp needs something to act on; nothing is downloaded.
+Enable Pages once, under the repo's Settings → Pages, with source `main` and folder `/docs`. The site then lives at `https://<user>.github.io/<repo>/` and redeploys about a minute after each push.
 
-That command dumps **every cookie in your browser**, not just YouTube's - typically a few thousand, covering every site you're signed into. Narrow it to just the domains yt-dlp needs, and make it readable only by you:
+Anyone with the link can read it - GitHub Pages sites are public regardless of repo visibility, since private Pages is an Enterprise-only feature. If these need to stay among friends, Pages is the wrong host; Cloudflare Pages with Access (free for up to 50 users) gates a static site behind a login.
 
-```bash
-{ head -1 ~/Downloads/cookies.txt; grep -E '(^|\.)(youtube\.com|google\.com)\b' ~/Downloads/cookies.txt; } > ~/Downloads/cookies.filtered && mv ~/Downloads/cookies.filtered ~/Downloads/cookies.txt && chmod 600 ~/Downloads/cookies.txt
-```
+### Why the app itself isn't hosted
 
-Check it worked - this counts lines without printing any cookie values:
+The obvious idea - deploy `app.py` so friends can paste URLs and have it transcribe on your key - does not work, and it's worth recording why so nobody rebuilds it.
 
-```bash
-grep -vc '^#' ~/Downloads/cookies.txt
-```
+**YouTube blocks datacenter IPs.** This was verified against a real deployment, not assumed. From a Fly.io machine, with a valid exported `cookies.txt` in place:
 
-A few hundred is expected. Treat this file like a password: it's a live YouTube session, and anyone holding it can act as your Google account. `.gitignore` and `.dockerignore` both exclude `cookies.txt`, but keeping it out of the project folder entirely is the safer habit.
+- `yt-dlp` refuses every request with "Sign in to confirm you're not a bot", for metadata as much as for downloads
+- `youtube-transcript-api` fails with `RequestBlocked`, and that library sends no cookies at all - which is what pins the cause to the IP rather than the credentials
 
-### 2. Create the app
+The identical cookie file and command succeed from a home connection seconds later. Since `get_video_metadata()` is the first call in the pipeline, nothing gets past step one: not Whisper videos, not caption-only ones. Better cookies don't fix it, because cookies were never the problem.
 
-Edit `fly.toml` and change `app = "CHANGE-ME"` to a name of your own, then:
+Getting around it means routing traffic through a residential IP - a paid proxy, or a tunnel back to your own network - which is ongoing cost and upkeep for the single benefit of letting friends submit URLs themselves. Publishing the finished HTML gives readers everything they actually need.
 
-```bash
-fly launch --no-deploy --copy-config --name your-app-name
-```
-
-Create the volume that keeps transcripts across deploys (without it, every report vanishes each time the machine is replaced):
-
-```bash
-fly volumes create transcripts_data --size 3 --region iad
-```
-
-### 3. Set the secrets
-
-These never go in the repo or the image - Fly injects them at runtime. Run each line separately, substituting your own values:
-
-```bash
-fly secrets set OPENAI_API_KEY="sk-..."
-```
-
-```bash
-fly secrets set APP_PASSWORD="the-password-you-give-friends"
-```
-
-```bash
-fly secrets set SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
-```
-
-```bash
-fly secrets set YT_COOKIES_B64="$(base64 < ~/Downloads/cookies.txt)"
-```
-
-`SECRET_KEY` signs the login cookie - a stable value keeps everyone logged in across deploys, and omitting it logs everyone out on every restart. `YT_COOKIES_B64` is base64-encoded because Fly secrets are single-line strings; the app decodes it to a `0600` file at startup.
-
-### 4. Deploy
-
-```bash
-fly deploy
-```
-
-Then open it and sign in with the password you set:
-
-```bash
-fly open
-```
-
-Give friends the URL and the password. That's the whole handoff - nothing to install on their end.
-
-### Keeping it running
-
-- **Cookies expire**, typically every few weeks. The symptom is videos failing at the download step with a yt-dlp bot-detection error, visible in the job's log on the Home page. The fix is re-exporting and re-running the `YT_COOKIES_B64` line above. Videos with existing manual Turkish captions keep working regardless, since they never download audio.
-- **Watch the logs** with `fly logs`.
-- **The image bundles Deno**, which isn't optional even though downloads authorize by cookie. YouTube gates format resolution behind a JavaScript "n" challenge that yt-dlp needs a JS runtime to solve; without one, every Whisper-bound video fails with "n challenge solving failed" regardless of how good your cookies are. Nothing for you to do - the Dockerfile installs it - but it's the first thing to check if downloads start failing after a base-image change.
-- **One machine, on purpose.** The job queue lives in the app's memory with a single worker thread, so `fly.toml` pins the deployment to exactly one always-on machine. Scaling to two would create two independent queues backed by two separate volumes. For the same reason, a restart clears the *queue history* shown on the Home page - finished reports are on the volume and survive fine.
-- **Jobs run one at a time.** Two friends submitting at once means the second waits, which is deliberate: it keeps OpenAI rate limits and ffmpeg CPU predictable.
-
-### Running it locally still works exactly as before
-
-None of the above changes local use. With `APP_PASSWORD` unset there's no login step, and `BIND_HOST` stays `127.0.0.1`:
-
-```bash
-python3 app.py
-```
+The `Dockerfile`, `fly.toml`, and the `APP_PASSWORD` login in `app.py` are all still here and working, if you ever want to revisit that with a proxy in front.
 
 ## What's not included (yet)
 
-No `publish.py` / GitHub Pages workflow like `turkish-voice-transcriber` has - these reports currently live locally only. If you want the same "choose what to publish" flow for these, it's a small addition and worth asking for once you've used the tool a bit.
+`publish.py` publishes everything in `transcripts/` at once. `turkish-voice-transcriber`'s "choose what to publish" flow has no equivalent here yet - worth adding if you ever want some transcripts kept off the public site.
