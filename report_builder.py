@@ -78,7 +78,7 @@ def update_manifest(output_folder: Path) -> None:
 def _sidebar_html() -> str:
     return """  <nav class="sidebar">
     <div class="sidebar-title">Transcripts</div>
-    <a class="sidebar-home-link" href="/">Home</a>
+    <a class="sidebar-home-link" href="./">Home</a>
     <div class="sidebar-list" id="sidebar-list">Loading&hellip;</div>
   </nav>"""
 
@@ -268,6 +268,55 @@ def build_home_page() -> str:
 <script src="manifest.js"></script>
 <script src="sidebar.js" defer></script>
 <script src="home.js" defer></script>
+</body>
+</html>
+"""
+
+
+def build_index_page(entries: list) -> str:
+    """
+    Landing page for the published (GitHub Pages) site.
+
+    app.py's Home page is a submission queue, which is meaningless on
+    static hosting - there's no worker behind it - so the published root
+    is a plain index of what's actually there instead.
+    """
+    if entries:
+        items = "\n            ".join(
+            f'<li><a href="{html.escape(e["file"])}">{_esc(e["title"])}</a></li>'
+            for e in entries
+        )
+        body = f'<ul class="index-list">\n            {items}\n          </ul>'
+    else:
+        body = '<p class="empty">No transcripts published yet.</p>'
+
+    count = len(entries)
+    subtitle = f"{count} transcript{'s' if count != 1 else ''} &middot; Turkish and English, side by side"
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turkish video transcripts</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+{_sidebar_html()}
+  <div class="content">
+    <div class="ornament-rule"></div>
+    <div class="wrap">
+      <header>
+        <h1>Turkish video transcripts</h1>
+        <div class="meta">{subtitle}</div>
+      </header>
+      {body}
+    </div>
+  </div>
+</div>
+<script src="manifest.js"></script>
+<script src="sidebar.js" defer></script>
 </body>
 </html>
 """

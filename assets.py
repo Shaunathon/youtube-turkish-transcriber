@@ -270,6 +270,20 @@ h1 { font-size: 1.9rem; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
 .job-error { margin-top: 8px; font-family: 'Work Sans', -apple-system, sans-serif; font-size: 0.88rem; color: #a83a3a; }
 .empty-jobs { font-family: 'Work Sans', -apple-system, sans-serif; color: var(--muted); font-size: 0.9rem; }
 
+/* Published-site index (publish.py's docs/index.html). A plain list of
+   what's available, since the static site has no submission queue. */
+.index-list { list-style: none; padding: 0; margin: 0; }
+.index-list li { border-bottom: 1px solid var(--line); }
+.index-list li:last-child { border-bottom: none; }
+.index-list a {
+  display: block;
+  padding: 13px 6px;
+  font-size: 1.14rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+.index-list a:hover { background: var(--turquoise-soft); color: var(--turquoise); }
+
 /* Login page (deployments with APP_PASSWORD set). Narrower than .wrap and
    sidebar-less - it's a single field, and there's no navigation to offer
    someone who isn't signed in yet. */

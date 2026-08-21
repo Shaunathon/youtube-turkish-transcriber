@@ -2,7 +2,7 @@
 # Fly app, then see the README's "Hosting it for other people" section for
 # the deploy steps and the secrets you need to set.
 
-app = "CHANGE-ME"
+app = "turkish-english-transcripts"
 primary_region = "iad"
 
 [build]
